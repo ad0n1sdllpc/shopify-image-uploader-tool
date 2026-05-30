@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+dist
+.env
+.env.local
+*.db
+*.db-shm
+*.db-wal
+coverage
+dev-server.log
+dev-server.err.log
+.history/
+TILES/

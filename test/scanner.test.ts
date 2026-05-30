@@ -1,0 +1,30 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { scanTilesFolder } from "@/lib/scanner";
+
+let tempDir: string | null = null;
+
+afterEach(async () => {
+  if (tempDir) await fs.rm(tempDir, { recursive: true, force: true });
+  tempDir = null;
+});
+
+describe("scanner", () => {
+  it("discovers tile image files inside size and tile folders", async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "tile-scan-"));
+    const tileFolder = path.join(tempDir, "60x60", "LUZ-14MEA");
+    await fs.mkdir(tileFolder, { recursive: true });
+    await fs.writeFile(path.join(tileFolder, "image2.png"), "png");
+    await fs.writeFile(path.join(tileFolder, "image1.jpg"), "jpg");
+    await fs.writeFile(path.join(tileFolder, "notes.txt"), "skip");
+
+    const scan = await scanTilesFolder(tempDir);
+
+    expect(scan.folders).toHaveLength(1);
+    expect(scan.folders[0].size).toBe("60x60");
+    expect(scan.folders[0].tileName).toBe("LUZ-14MEA");
+    expect(scan.folders[0].images.map((image) => image.name)).toEqual(["image1.jpg", "image2.png"]);
+  });
+});
