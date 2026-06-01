@@ -8,7 +8,24 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (() => {
+                try {
+                  const mode = localStorage.getItem("tile-uploader-theme") || "system";
+                  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                  const dark = mode === "dark" || (mode === "system" && prefersDark);
+                  document.documentElement.classList.toggle("dark", dark);
+                  document.documentElement.style.colorScheme = dark ? "dark" : "light";
+                } catch {}
+              })();
+            `
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

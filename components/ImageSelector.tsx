@@ -37,20 +37,20 @@ export default function ImageSelector({
   }
 
   return (
-    <section className="rounded-md border border-ink/10 bg-white p-4 shadow-soft">
+    <section className="rounded-md border border-ink/10 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#151d18] dark:shadow-none">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <h2 className="font-semibold">{match.product.title}</h2>
-          <p className="text-sm text-ink/55">{match.folder.relativePath}</p>
+          <p className="text-sm text-ink/55 dark:text-white/55">{match.folder.relativePath}</p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <select value={mode} onChange={(event) => { const next = event.target.value as UploadMode; setMode(next); persist(order, firstPath, next, deleteOldMedia); }} className="focus-ring rounded-md border border-ink/15 px-3 py-2 text-sm">
+          <select value={mode} onChange={(event) => { const next = event.target.value as UploadMode; setMode(next); persist(order, firstPath, next, deleteOldMedia); }} className="focus-ring rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white">
             <option value="append-folder">Replace first + upload all</option>
             <option value="replace-first">Replace first only</option>
             <option value="replace-gallery">Replace full gallery</option>
           </select>
-          <label className="flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-sm">
-            <input type="checkbox" checked={deleteOldMedia} onChange={(event) => { setDeleteOldMedia(event.target.checked); persist(order, firstPath, mode, event.target.checked); }} />
+          <label className="flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-sm dark:border-white/15">
+            <input type="checkbox" checked={deleteOldMedia} onChange={(event) => { setDeleteOldMedia(event.target.checked); persist(order, firstPath, mode, event.target.checked); }} className="dark:bg-[#0f1511]" />
             Delete old media after verification
           </label>
         </div>
@@ -58,8 +58,8 @@ export default function ImageSelector({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[180px_1fr]">
         <div>
-          <p className="mb-2 text-xs font-medium uppercase text-ink/50">Current Shopify first</p>
-          {match.product.firstImageUrl ? <img src={match.product.firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="flex aspect-square items-center justify-center rounded-md bg-mist text-xs text-ink/45">No image</div>}
+          <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Current Shopify first</p>
+          {match.product.firstImageUrl ? <img src={match.product.firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="flex aspect-square items-center justify-center rounded-md bg-mist text-xs text-ink/45 dark:bg-white/10 dark:text-white/45">No image</div>}
         </div>
 
         <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -92,13 +92,13 @@ function SortableImage({ image, selected, onSelect }: { image: LocalImage; selec
   const style = { transform: CSS.Transform.toString(transform), transition };
 
   return (
-    <div ref={setNodeRef} style={style} className={`relative rounded-md border bg-white p-2 ${selected ? "border-clay ring-2 ring-clay" : "border-ink/10"}`}>
-      <button {...attributes} {...listeners} className="absolute left-3 top-3 z-10 rounded bg-white/90 p-1 text-ink/55 shadow" title="Drag to reorder">
+    <div ref={setNodeRef} style={style} className={`relative rounded-md border bg-white p-2 dark:bg-[#0f1511] ${selected ? "border-clay ring-2 ring-clay" : "border-ink/10 dark:border-white/10"}`}>
+      <button {...attributes} {...listeners} className="absolute left-3 top-3 z-10 rounded bg-white/90 p-1 text-ink/55 shadow dark:bg-black/70 dark:text-white/70" title="Drag to reorder">
         <GripVertical size={15} />
       </button>
       <button onClick={onSelect} className="focus-ring block w-full text-left" title="Mark as first image">
         <img src={image.previewUrl} alt={image.name} className="aspect-square w-full rounded object-cover" />
-        <span className="mt-2 block truncate text-xs text-ink/65">{image.name}</span>
+        <span className="mt-2 block truncate text-xs text-ink/65 dark:text-white/65">{image.name}</span>
       </button>
       {selected ? (
         <span className="absolute right-3 top-3 flex items-center gap-1 rounded bg-clay px-2 py-1 text-xs font-semibold text-white">

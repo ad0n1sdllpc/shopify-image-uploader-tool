@@ -2,9 +2,10 @@ import "server-only";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { removeWhiteBackground } from "@/lib/backgroundTransparency";
 import { reorderProductMedia, verifyMediaOrder } from "@/lib/mediaOrder";
 import { shopifyGraphql } from "@/lib/shopify";
-import type { UploadJob, UploadProductStatus, UploadSelection } from "@/types";
+import type { UploadJob, UploadOptions, UploadProductStatus, UploadSelection } from "@/types";
 
 const MIME_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -25,26 +26,39 @@ function mimeType(filePath: string) {
   return MIME_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
-export function createDryRunJob(selections: UploadSelection[]): UploadJob {
+const defaultUploadOptions: UploadOptions = { removeWhiteBackground: false };
+
+export function createDryRunJob(selections: UploadSelection[], options: UploadOptions = defaultUploadOptions): UploadJob {
   return {
     id: jobId(),
     createdAt: new Date().toISOString(),
     mode: selections[0]?.mode ?? "append-folder",
     dryRun: true,
+    removeWhiteBackground: options.removeWhiteBackground,
     status: "success",
     products: selections.map((selection) => ({
       productId: selection.product.id,
       title: selection.product.title,
       status: "dry-run",
       progress: 100,
-      message: `${selection.orderedImagePaths.length} image(s) would upload. Existing media will be ${selection.deleteOldMedia ? "deleted after verification" : "kept"}.`,
+      message: `${selection.orderedImagePaths.length} image(s) would upload${options.removeWhiteBackground ? " with white backgrounds removed" : ""}. Existing media will be ${selection.deleteOldMedia ? "deleted after verification" : "kept"}.`,
       uploadedMediaIds: []
     }))
   };
 }
 
-async function stagedUpload(filePath: string) {
-  const stat = await fs.stat(filePath);
+async function prepareUpload(filePath: string, options: UploadOptions) {
+  if (options.removeWhiteBackground) return removeWhiteBackground(filePath);
+
+  return {
+    bytes: await fs.readFile(filePath),
+    fileName: fileName(filePath),
+    mimeType: mimeType(filePath)
+  };
+}
+
+async function stagedUpload(filePath: string, options: UploadOptions) {
+  const upload = await prepareUpload(filePath, options);
   const staged = await shopifyGraphql<{
     stagedUploadsCreate: {
       stagedTargets: { url: string; resourceUrl: string; parameters: { name: string; value: string }[] }[];
@@ -60,10 +74,10 @@ async function stagedUpload(filePath: string) {
     {
       input: [
         {
-          filename: fileName(filePath),
-          mimeType: mimeType(filePath),
+          filename: upload.fileName,
+          mimeType: upload.mimeType,
           resource: "PRODUCT_IMAGE",
-          fileSize: stat.size.toString(),
+          fileSize: upload.bytes.length.toString(),
           httpMethod: "POST"
         }
       ]
@@ -79,19 +93,20 @@ async function stagedUpload(filePath: string) {
     form.append(parameter.name, parameter.value);
   }
 
-  const bytes = await fs.readFile(filePath);
-  form.append("file", new Blob([bytes], { type: mimeType(filePath) }), fileName(filePath));
+  const blobBytes = new Uint8Array(upload.bytes.length);
+  blobBytes.set(upload.bytes);
+  form.append("file", new Blob([blobBytes.buffer], { type: upload.mimeType }), upload.fileName);
 
   const uploadResponse = await fetch(target.url, { method: "POST", body: form });
-  if (!uploadResponse.ok) throw new Error(`Staged upload failed for ${fileName(filePath)}.`);
+  if (!uploadResponse.ok) throw new Error(`Staged upload failed for ${upload.fileName}.`);
 
   return target.resourceUrl;
 }
 
-async function attachProductMedia(productId: string, imagePaths: string[]) {
+async function attachProductMedia(productId: string, imagePaths: string[], options: UploadOptions) {
   const originalSources = [];
   for (const imagePath of imagePaths) {
-    originalSources.push(await stagedUpload(imagePath));
+    originalSources.push(await stagedUpload(imagePath, options));
   }
 
   const data = await shopifyGraphql<{
@@ -139,12 +154,13 @@ async function deleteMedia(productId: string, mediaIds: string[]) {
   if (errors.length) throw new Error(errors.map((error) => error.message).join("; "));
 }
 
-export async function runUploadJob(selections: UploadSelection[], onUpdate?: (job: UploadJob) => void | Promise<void>) {
+export async function runUploadJob(selections: UploadSelection[], options: UploadOptions = defaultUploadOptions, onUpdate?: (job: UploadJob) => void | Promise<void>) {
   const job: UploadJob = {
     id: jobId(),
     createdAt: new Date().toISOString(),
     mode: selections[0]?.mode ?? "append-folder",
     dryRun: false,
+    removeWhiteBackground: options.removeWhiteBackground,
     status: "running",
     products: selections.map<UploadProductStatus>((selection) => ({
       productId: selection.product.id,
@@ -170,7 +186,7 @@ export async function runUploadJob(selections: UploadSelection[], onUpdate?: (jo
       const oldMediaIds = [...selection.product.mediaIds];
       const pathsToUpload =
         selection.mode === "replace-first" ? [selection.selectedFirstImagePath] : selection.orderedImagePaths;
-      const uploadedMediaIds = await attachProductMedia(selection.product.id, pathsToUpload);
+      const uploadedMediaIds = await attachProductMedia(selection.product.id, pathsToUpload, options);
       productStatus.uploadedMediaIds = uploadedMediaIds;
       productStatus.message = "Reordering Shopify media";
       productStatus.progress = 65;

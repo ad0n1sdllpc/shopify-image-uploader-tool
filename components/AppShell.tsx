@@ -6,6 +6,7 @@ import { CheckCircle2, FolderSearch, History, Images, LayoutDashboard, RefreshCw
 import ImageSelector from "@/components/ImageSelector";
 import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
+import ThemeToggle from "@/components/ThemeToggle";
 import UploadProgress from "@/components/UploadProgress";
 import type { ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
 
@@ -36,15 +37,24 @@ export default function AppShell({ page }: { page: PageKey }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<UploadJob[]>([]);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tile-uploader-state");
-    if (saved) setStore(JSON.parse(saved) as Store);
+    if (saved) {
+      try {
+        setStore(JSON.parse(saved) as Store);
+      } catch {
+        window.localStorage.removeItem("tile-uploader-state");
+      }
+    }
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     window.localStorage.setItem("tile-uploader-state", JSON.stringify(store));
-  }, [store]);
+  }, [hydrated, store]);
 
   const matchedSelections = useMemo(
     () => store.matches.filter((match) => match.product).length,
@@ -72,17 +82,23 @@ export default function AppShell({ page }: { page: PageKey }) {
   }
 
   async function fetchProductsAndMatch() {
-    if (!store.scan) return;
     setBusy(true);
     setError(null);
     try {
+      const scan = store.scan ?? await request<ScanResult>(`/api/scan?path=${encodeURIComponent(folderPath)}`);
       const productsResponse = await request<{ products: ShopifyProduct[] }>("/api/products");
       const matchResponse = await request<{ matches: ProductMatch[] }>("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folders: store.scan.folders, products: productsResponse.products })
+        body: JSON.stringify({ folders: scan.folders, products: productsResponse.products })
       });
-      setStore((current) => ({ ...current, products: productsResponse.products, matches: matchResponse.matches }));
+      setStore((current) => ({
+        ...current,
+        scan,
+        products: productsResponse.products,
+        matches: matchResponse.matches,
+        selections: current.scan ? current.selections : []
+      }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -116,14 +132,14 @@ export default function AppShell({ page }: { page: PageKey }) {
     }));
   }
 
-  async function runUpload(dryRun: boolean) {
+  async function runUpload(dryRun: boolean, removeWhiteBackground: boolean) {
     setBusy(true);
     setError(null);
     try {
       const response = await request<{ job: UploadJob }>(dryRun ? "/api/uploads/dry-run" : "/api/uploads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections: store.selections })
+        body: JSON.stringify({ selections: store.selections, options: { removeWhiteBackground } })
       });
       setStore((current) => ({ ...current, lastJob: response.job }));
       await loadHistory();
@@ -144,15 +160,15 @@ export default function AppShell({ page }: { page: PageKey }) {
   }, [page]);
 
   return (
-    <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-ink/10 bg-white px-4 py-5 lg:block">
+    <div className="min-h-screen bg-mist text-ink transition-colors dark:bg-[#0f1511] dark:text-[#edf3ec]">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-ink/10 bg-white px-4 py-5 dark:border-white/10 dark:bg-[#131b16] lg:block">
         <div className="mb-7 flex items-center gap-3 px-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-moss text-white">
+          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-moss text-white dark:bg-fern">
             <UploadCloud size={21} />
           </div>
           <div>
             <p className="text-sm font-semibold">Tile Uploader</p>
-            <p className="text-xs text-ink/55">Local Shopify media tool</p>
+            <p className="text-xs text-ink/55 dark:text-white/55">Local Shopify media tool</p>
           </div>
         </div>
         <nav className="space-y-1">
@@ -164,7 +180,7 @@ export default function AppShell({ page }: { page: PageKey }) {
                 key={item.key}
                 href={item.href}
                 className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition ${
-                  active ? "bg-moss text-white" : "text-ink/70 hover:bg-mist hover:text-ink"
+                  active ? "bg-moss text-white dark:bg-fern" : "text-ink/70 hover:bg-mist hover:text-ink dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
                 }`}
               >
                 <Icon size={18} />
@@ -173,6 +189,9 @@ export default function AppShell({ page }: { page: PageKey }) {
             );
           })}
         </nav>
+        <div className="mt-6 border-t border-ink/10 pt-4 dark:border-white/10">
+          <ThemeToggle />
+        </div>
       </aside>
 
       <main className="lg:pl-64">
@@ -180,18 +199,21 @@ export default function AppShell({ page }: { page: PageKey }) {
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-2xl font-semibold tracking-normal">{navItems.find((item) => item.key === page)?.label}</h1>
-              <p className="mt-1 text-sm text-ink/60">Scan local images, match products, choose order, then upload with verification.</p>
+              <p className="mt-1 text-sm text-ink/60 dark:text-white/60">Scan local images, match products, choose order, then upload with verification.</p>
             </div>
-            <div className="flex gap-2 lg:hidden">
-              {navItems.map((item) => (
-                <Link key={item.key} href={item.href} className={`rounded-md border px-3 py-2 text-xs ${item.key === page ? "border-moss bg-moss text-white" : "border-ink/10 bg-white"}`}>
-                  {item.label}
-                </Link>
-              ))}
+            <div className="flex flex-wrap items-center gap-2 lg:hidden">
+              <div className="flex flex-wrap gap-2">
+                {navItems.map((item) => (
+                  <Link key={item.key} href={item.href} className={`rounded-md border px-3 py-2 text-xs ${item.key === page ? "border-moss bg-moss text-white dark:border-fern dark:bg-fern" : "border-ink/10 bg-white dark:border-white/10 dark:bg-white/5 dark:text-white/75"}`}>
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+              <ThemeToggle />
             </div>
           </div>
 
-          {error ? <div className="mb-4 rounded-md border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay">{error}</div> : null}
+          {error ? <div className="mb-4 rounded-md border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay dark:bg-clay/20 dark:text-[#ffb39d]">{error}</div> : null}
 
           {page === "dashboard" ? (
             <Dashboard store={store} matchedSelections={matchedSelections} />
@@ -223,17 +245,17 @@ function Dashboard({ store, matchedSelections }: { store: Store; matchedSelectio
   return (
     <div className="grid gap-4 md:grid-cols-4">
       {cards.map(([label, value]) => (
-        <div key={label} className="rounded-md border border-ink/10 bg-white p-5 shadow-soft">
-          <p className="text-sm text-ink/55">{label}</p>
+        <div key={label} className="rounded-md border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#151d18] dark:shadow-none">
+          <p className="text-sm text-ink/55 dark:text-white/55">{label}</p>
           <p className="mt-2 text-3xl font-semibold">{value}</p>
         </div>
       ))}
-      <div className="rounded-md border border-ink/10 bg-white p-5 md:col-span-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-moss">
+      <div className="rounded-md border border-ink/10 bg-white p-5 dark:border-white/10 dark:bg-[#151d18] md:col-span-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-moss dark:text-[#9fce96]">
           <CheckCircle2 size={18} />
           Workflow
         </div>
-        <p className="mt-2 text-sm text-ink/65">Start with Folder Scan, fetch and match Shopify products, select the first image and order, then review with dry-run before live upload.</p>
+        <p className="mt-2 text-sm text-ink/65 dark:text-white/65">Start with Folder Scan, fetch and match Shopify products, select the first image and order, then review with dry-run before live upload.</p>
       </div>
     </div>
   );
@@ -242,11 +264,11 @@ function Dashboard({ store, matchedSelections }: { store: Store; matchedSelectio
 function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy: boolean; folderPath: string; setFolderPath: (path: string) => void; scanFolders: () => void; scan: ScanResult | null }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-ink/10 bg-white p-5">
+      <div className="rounded-md border border-ink/10 bg-white p-5 dark:border-white/10 dark:bg-[#151d18]">
         <label className="text-sm font-medium">Local TILES folder path</label>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} className="focus-ring min-w-0 flex-1 rounded-md border border-ink/15 px-3 py-2 text-sm" />
-          <button disabled={busy} onClick={scanFolders} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white">
+          <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} className="focus-ring min-w-0 flex-1 rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white" />
+          <button disabled={busy} onClick={scanFolders} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white dark:bg-fern">
             <FolderSearch size={17} />
             Scan
           </button>
@@ -255,9 +277,9 @@ function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy
       {scan ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {scan.folders.map((folder) => (
-            <div key={folder.id} className="rounded-md border border-ink/10 bg-white p-4">
+            <div key={folder.id} className="rounded-md border border-ink/10 bg-white p-4 dark:border-white/10 dark:bg-[#151d18]">
               <p className="text-sm font-semibold">{folder.size} / {folder.tileName}</p>
-              <p className="mt-1 truncate text-xs text-ink/50">{folder.relativePath}</p>
+              <p className="mt-1 truncate text-xs text-ink/50 dark:text-white/50">{folder.relativePath}</p>
               <div className="mt-3 grid grid-cols-5 gap-2">
                 {folder.images.slice(0, 5).map((image) => <img key={image.id} src={image.previewUrl} alt={image.name} className="aspect-square rounded-md object-cover" />)}
               </div>
@@ -272,7 +294,7 @@ function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy
 function MatchingPage({ busy, store, fetchProductsAndMatch, updateManualMatch }: { busy: boolean; store: Store; fetchProductsAndMatch: () => void; updateManualMatch: (folderId: string, productId: string) => void }) {
   return (
     <div className="space-y-4">
-      <button disabled={busy || !store.scan} onClick={fetchProductsAndMatch} className="focus-ring inline-flex items-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white">
+      <button disabled={busy} onClick={fetchProductsAndMatch} className="focus-ring inline-flex items-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white dark:bg-fern">
         <RefreshCw size={17} />
         Fetch Products And Match
       </button>
@@ -288,32 +310,45 @@ function SelectorPage({ store, updateSelection }: { store: Store; updateSelectio
       {matches.map((match) => (
         <ImageSelector key={match.folder.id} match={match} existingSelection={store.selections.find((selection) => selection.folder.id === match.folder.id)} onChange={updateSelection} />
       ))}
-      {matches.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60">No matched products yet.</p> : null}
+      {matches.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No matched products yet.</p> : null}
     </div>
   );
 }
 
-function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; runUpload: (dryRun: boolean) => void }) {
+function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; runUpload: (dryRun: boolean, removeWhiteBackground: boolean) => void }) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [removeWhiteBackground, setRemoveWhiteBackground] = useState(false);
   return (
     <div className="space-y-4">
-      <ReviewUploadModal open={modalOpen} disabled={busy || store.selections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true)} onUpload={() => runUpload(false)} />
+      <ReviewUploadModal open={modalOpen} disabled={busy || store.selections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true, removeWhiteBackground)} onUpload={() => runUpload(false, removeWhiteBackground)} />
+      <label className="flex max-w-xl items-start gap-3 rounded-md border border-ink/10 bg-white p-4 text-sm dark:border-white/10 dark:bg-[#151d18]">
+        <input
+          type="checkbox"
+          checked={removeWhiteBackground}
+          onChange={(event) => setRemoveWhiteBackground(event.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-ink/20 text-moss dark:border-white/20 dark:bg-[#0f1511]"
+        />
+        <span>
+          <span className="block font-medium">Remove white background</span>
+          <span className="mt-1 block text-ink/60 dark:text-white/60">Upload transparent PNG versions to Shopify while keeping local files unchanged.</span>
+        </span>
+      </label>
       <button disabled={busy || store.selections.length === 0} onClick={() => setModalOpen(true)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-clay px-4 py-2 text-sm font-semibold text-white">
         <UploadCloud size={17} />
         Review And Confirm
       </button>
       <div className="grid gap-4">
         {store.selections.map((selection) => (
-          <div key={selection.folder.id} className="rounded-md border border-ink/10 bg-white p-4">
+          <div key={selection.folder.id} className="rounded-md border border-ink/10 bg-white p-4 dark:border-white/10 dark:bg-[#151d18]">
             <p className="font-semibold">{selection.product.title}</p>
-            <p className="text-sm text-ink/55">{selection.folder.relativePath}</p>
+            <p className="text-sm text-ink/55 dark:text-white/55">{selection.folder.relativePath}</p>
             <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
               <div>
-                <p className="mb-1 text-xs font-medium text-ink/50">Old first image</p>
-                {selection.product.firstImageUrl ? <img src={selection.product.firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="aspect-square rounded-md bg-mist" />}
+                <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Old first image</p>
+                {selection.product.firstImageUrl ? <img src={selection.product.firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="aspect-square rounded-md bg-mist dark:bg-white/10" />}
               </div>
               <div>
-                <p className="mb-1 text-xs font-medium text-ink/50">Upload order</p>
+                <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Upload order</p>
                 <div className="grid grid-cols-4 gap-2 md:grid-cols-8">
                   {selection.orderedImagePaths.map((imagePath) => {
                     const image = selection.folder.images.find((item) => item.absolutePath === imagePath);
@@ -333,12 +368,12 @@ function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; r
 function HistoryPage({ history, refresh }: { history: UploadJob[]; refresh: () => void }) {
   return (
     <div className="space-y-4">
-      <button onClick={refresh} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium">
+      <button onClick={refresh} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium dark:border-white/15 dark:bg-white/5 dark:text-white">
         <RefreshCw size={17} />
         Refresh
       </button>
       {history.map((job) => <UploadProgress key={job.id} job={job} />)}
-      {history.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60">No upload jobs logged yet.</p> : null}
+      {history.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No upload jobs logged yet.</p> : null}
     </div>
   );
 }

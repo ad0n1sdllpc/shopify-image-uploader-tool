@@ -55,6 +55,10 @@ export type UploadSelection = {
   deleteOldMedia: boolean;
 };
 
+export type UploadOptions = {
+  removeWhiteBackground: boolean;
+};
+
 export type UploadProductStatus = {
   productId: string;
   title: string;
@@ -70,6 +74,7 @@ export type UploadJob = {
   createdAt: string;
   mode: UploadMode;
   dryRun: boolean;
+  removeWhiteBackground: boolean;
   status: "pending" | "running" | "success" | "failed" | "partial";
   products: UploadProductStatus[];
 };

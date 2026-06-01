@@ -3,9 +3,20 @@ import type { ShopifyProduct } from "@/types";
 
 const DEFAULT_API_VERSION = "2026-01";
 
+function normalizeStoreDomain(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    return new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).hostname;
+  } catch {
+    return trimmed.replace(/^https?:\/\//, "").split("/")[0];
+  }
+}
+
 export function getShopifyConfig() {
   return {
-    storeDomain: process.env.SHOPIFY_STORE_DOMAIN,
+    storeDomain: normalizeStoreDomain(process.env.SHOPIFY_STORE_DOMAIN),
     accessToken: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN,
     apiVersion: process.env.SHOPIFY_API_VERSION || DEFAULT_API_VERSION
   };
@@ -20,7 +31,32 @@ export function getEnvironmentStatus() {
   };
 }
 
-type GraphQLError = { message: string };
+type GraphQLError = { message?: string };
+
+function formatShopifyErrors(errors: unknown) {
+  if (!errors) return null;
+
+  if (Array.isArray(errors)) {
+    return errors
+      .map((error) => {
+        if (typeof error === "string") return error;
+        if (error && typeof error === "object" && "message" in error) return String((error as GraphQLError).message);
+        return JSON.stringify(error);
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  if (typeof errors === "string") return errors;
+
+  if (typeof errors === "object") {
+    return Object.entries(errors)
+      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`)
+      .join("; ");
+  }
+
+  return String(errors);
+}
 
 export async function shopifyGraphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const config = getShopifyConfig();
@@ -28,7 +64,8 @@ export async function shopifyGraphql<T>(query: string, variables?: Record<string
     throw new Error("Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN.");
   }
 
-  const response = await fetch(`https://${config.storeDomain}/admin/api/${config.apiVersion}/graphql.json`, {
+  const url = `https://${config.storeDomain}/admin/api/${config.apiVersion}/graphql.json`;
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -36,11 +73,15 @@ export async function shopifyGraphql<T>(query: string, variables?: Record<string
     },
     body: JSON.stringify({ query, variables }),
     cache: "no-store"
+  }).catch((error) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not connect to Shopify at ${config.storeDomain}: ${reason}`);
   });
 
-  const payload = (await response.json()) as { data?: T; errors?: GraphQLError[] };
-  if (!response.ok || payload.errors?.length) {
-    throw new Error(payload.errors?.map((error) => error.message).join("; ") || `Shopify request failed: ${response.status}`);
+  const payload = (await response.json()) as { data?: T; errors?: unknown };
+  const errorMessage = formatShopifyErrors(payload.errors);
+  if (!response.ok || errorMessage) {
+    throw new Error(errorMessage || `Shopify request failed: ${response.status}`);
   }
 
   if (!payload.data) throw new Error("Shopify returned no data.");

@@ -31,9 +31,17 @@ describe("uploader planning", () => {
     const job = createDryRunJob([selection]);
 
     expect(job.dryRun).toBe(true);
+    expect(job.removeWhiteBackground).toBe(false);
     expect(job.status).toBe("success");
     expect(job.products[0].status).toBe("dry-run");
     expect(job.products[0].uploadedMediaIds).toEqual([]);
     expect(job.products[0].message).toContain("2 image");
+  });
+
+  it("mentions white background removal in dry-run jobs", () => {
+    const job = createDryRunJob([selection], { removeWhiteBackground: true });
+
+    expect(job.removeWhiteBackground).toBe(true);
+    expect(job.products[0].message).toContain("white backgrounds removed");
   });
 });
