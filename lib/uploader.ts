@@ -36,14 +36,14 @@ export function createDryRunJob(selections: UploadSelection[], options: UploadOp
     dryRun: true,
     removeWhiteBackground: options.removeWhiteBackground,
     status: "success",
-    products: selections.map((selection) => ({
-      productId: selection.product.id,
-      title: selection.product.title,
+    products: selections.flatMap((selection) => selection.products.map((product) => ({
+      productId: product.id,
+      title: product.title,
       status: "dry-run",
       progress: 100,
       message: `${selection.orderedImagePaths.length} image(s) would upload${options.removeWhiteBackground ? " with white backgrounds removed" : ""}. Existing media will be ${selection.deleteOldMedia ? "deleted after verification" : "kept"}.`,
       uploadedMediaIds: []
-    }))
+    })))
   };
 }
 
@@ -162,60 +162,64 @@ export async function runUploadJob(selections: UploadSelection[], options: Uploa
     dryRun: false,
     removeWhiteBackground: options.removeWhiteBackground,
     status: "running",
-    products: selections.map<UploadProductStatus>((selection) => ({
-      productId: selection.product.id,
-      title: selection.product.title,
+    products: selections.flatMap<UploadProductStatus>((selection) => selection.products.map((product) => ({
+      productId: product.id,
+      title: product.title,
       status: "pending",
       progress: 0,
       message: "Waiting",
       uploadedMediaIds: []
-    }))
+    })))
   };
 
   const persist = async () => onUpdate?.(job);
   await persist();
 
-  for (const [index, selection] of selections.entries()) {
-    const productStatus = job.products[index];
-    productStatus.status = "running";
-    productStatus.message = "Uploading local images";
-    productStatus.progress = 15;
-    await persist();
-
-    try {
-      const oldMediaIds = [...selection.product.mediaIds];
-      const pathsToUpload =
-        selection.mode === "replace-first" ? [selection.selectedFirstImagePath] : selection.orderedImagePaths;
-      const uploadedMediaIds = await attachProductMedia(selection.product.id, pathsToUpload, options);
-      productStatus.uploadedMediaIds = uploadedMediaIds;
-      productStatus.message = "Reordering Shopify media";
-      productStatus.progress = 65;
+  let productStatusIndex = 0;
+  for (const selection of selections) {
+    for (const product of selection.products) {
+      const productStatus = job.products[productStatusIndex];
+      productStatusIndex += 1;
+      productStatus.status = "running";
+      productStatus.message = "Uploading local images";
+      productStatus.progress = 15;
       await persist();
 
-      const preserveIds = oldMediaIds.filter((id) => !uploadedMediaIds.includes(id));
-      const orderedPrefix = selection.mode === "replace-first" ? [uploadedMediaIds[0]] : uploadedMediaIds;
-      await reorderProductMedia(selection.product.id, [...orderedPrefix, ...preserveIds]);
-      await verifyMediaOrder(selection.product.id, orderedPrefix);
-
-      if (selection.deleteOldMedia) {
-        productStatus.message = "Deleting old media after verification";
-        productStatus.progress = 88;
+      try {
+        const oldMediaIds = [...product.mediaIds];
+        const pathsToUpload =
+          selection.mode === "replace-first" ? [selection.selectedFirstImagePath] : selection.orderedImagePaths;
+        const uploadedMediaIds = await attachProductMedia(product.id, pathsToUpload, options);
+        productStatus.uploadedMediaIds = uploadedMediaIds;
+        productStatus.message = "Reordering Shopify media";
+        productStatus.progress = 65;
         await persist();
-        const deleteIds = selection.mode === "replace-gallery" ? oldMediaIds : oldMediaIds.slice(0, 1);
-        await deleteMedia(selection.product.id, deleteIds);
+
+        const preserveIds = oldMediaIds.filter((id) => !uploadedMediaIds.includes(id));
+        const orderedPrefix = selection.mode === "replace-first" ? [uploadedMediaIds[0]] : uploadedMediaIds;
+        await reorderProductMedia(product.id, [...orderedPrefix, ...preserveIds]);
+        await verifyMediaOrder(product.id, orderedPrefix);
+
+        if (selection.deleteOldMedia) {
+          productStatus.message = "Deleting old media after verification";
+          productStatus.progress = 88;
+          await persist();
+          const deleteIds = selection.mode === "replace-gallery" ? oldMediaIds : oldMediaIds.slice(0, 1);
+          await deleteMedia(product.id, deleteIds);
+        }
+
+        productStatus.status = "success";
+        productStatus.progress = 100;
+        productStatus.message = "Upload verified";
+      } catch (error) {
+        productStatus.status = "failed";
+        productStatus.progress = 100;
+        productStatus.message = "Upload failed";
+        productStatus.error = error instanceof Error ? error.message : String(error);
       }
 
-      productStatus.status = "success";
-      productStatus.progress = 100;
-      productStatus.message = "Upload verified";
-    } catch (error) {
-      productStatus.status = "failed";
-      productStatus.progress = 100;
-      productStatus.message = "Upload failed";
-      productStatus.error = error instanceof Error ? error.message : String(error);
+      await persist();
     }
-
-    await persist();
   }
 
   const failed = job.products.filter((product) => product.status === "failed").length;

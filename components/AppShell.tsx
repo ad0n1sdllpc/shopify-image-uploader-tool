@@ -29,7 +29,119 @@ type Store = {
   lastJob: UploadJob | null;
 };
 
+type PersistedStore = {
+  scan: ScanResult | null;
+  products: ShopifyProduct[];
+  matches: {
+    folderId: string;
+    confidence: ProductMatch["confidence"];
+    productId: string | null;
+    candidateIds: string[];
+    selectedProductIds: string[];
+    reason: string;
+  }[];
+  selections: {
+    folderId: string;
+    productIds: string[];
+    selectedFirstImagePath: string;
+    orderedImagePaths: string[];
+    mode: UploadMode;
+    deleteOldMedia: boolean;
+  }[];
+  lastJob: UploadJob | null;
+};
+
 const emptyStore: Store = { scan: null, products: [], matches: [], selections: [], lastJob: null };
+
+function compactStore(store: Store): PersistedStore {
+  return {
+    scan: store.scan,
+    products: store.products,
+    matches: store.matches.map((match) => ({
+      folderId: match.folder.id,
+      confidence: match.confidence,
+      productId: match.product?.id ?? null,
+      candidateIds: match.candidates.map((product) => product.id),
+      selectedProductIds: match.selectedProducts.map((product) => product.id),
+      reason: match.reason
+    })),
+    selections: store.selections.map((selection) => ({
+      folderId: selection.folder.id,
+      productIds: selection.products.map((product) => product.id),
+      selectedFirstImagePath: selection.selectedFirstImagePath,
+      orderedImagePaths: selection.orderedImagePaths,
+      mode: selection.mode,
+      deleteOldMedia: selection.deleteOldMedia
+    })),
+    lastJob: store.lastJob
+  };
+}
+
+function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): Store {
+  const scan = saved.scan ?? null;
+  const products = saved.products ?? [];
+  const foldersById = new Map(scan?.folders.map((folder) => [folder.id, folder]) ?? []);
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  const matches = (saved.matches ?? []).flatMap((match) => {
+    const legacyMatch = match as Partial<ProductMatch> & Partial<PersistedStore["matches"][number]>;
+    const folder = legacyMatch.folder ?? (legacyMatch.folderId ? foldersById.get(legacyMatch.folderId) : null);
+    if (!folder) return [];
+
+    const candidateIds = legacyMatch.candidateIds ?? legacyMatch.candidates?.map((product) => product.id) ?? [];
+    const selectedProductIds =
+      legacyMatch.selectedProductIds ??
+      legacyMatch.selectedProducts?.map((product) => product.id) ??
+      (legacyMatch.product?.id ? [legacyMatch.product.id] : []);
+    const candidates = candidateIds
+      .map((productId) => productsById.get(productId))
+      .filter((product): product is ShopifyProduct => Boolean(product));
+    const selectedProducts = selectedProductIds
+      .map((productId) => productsById.get(productId))
+      .filter((product): product is ShopifyProduct => Boolean(product));
+
+    return [{
+      folder,
+      confidence: legacyMatch.confidence ?? "No Match",
+      product: selectedProducts[0] ?? (legacyMatch.product ?? null),
+      candidates,
+      selectedProducts,
+      reason: legacyMatch.reason ?? ""
+    }];
+  });
+
+  const selections = (saved.selections ?? []).flatMap((selection) => {
+    const legacySelection = selection as Partial<UploadSelection> & Partial<PersistedStore["selections"][number]> & { product?: ShopifyProduct };
+    const folder = legacySelection.folder ?? (legacySelection.folderId ? foldersById.get(legacySelection.folderId) : null);
+    if (!folder) return [];
+
+    const productIds =
+      legacySelection.productIds ??
+      legacySelection.products?.map((product) => product.id) ??
+      (legacySelection.product?.id ? [legacySelection.product.id] : []);
+    const nextProducts = productIds
+      .map((productId) => productsById.get(productId))
+      .filter((product): product is ShopifyProduct => Boolean(product));
+    if (nextProducts.length === 0) return [];
+
+    return [{
+      folder,
+      products: nextProducts,
+      selectedFirstImagePath: legacySelection.selectedFirstImagePath ?? folder.images[0]?.absolutePath ?? "",
+      orderedImagePaths: legacySelection.orderedImagePaths ?? folder.images.map((image) => image.absolutePath),
+      mode: legacySelection.mode ?? "append-folder",
+      deleteOldMedia: Boolean(legacySelection.deleteOldMedia)
+    }];
+  });
+
+  return {
+    scan,
+    products,
+    matches,
+    selections,
+    lastJob: saved.lastJob ?? null
+  };
+}
 
 export default function AppShell({ page }: { page: PageKey }) {
   const [store, setStore] = useState<Store>(emptyStore);
@@ -43,7 +155,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     const saved = window.localStorage.getItem("tile-uploader-state");
     if (saved) {
       try {
-        setStore(JSON.parse(saved) as Store);
+        setStore(normalizeStoredStore(JSON.parse(saved) as Store));
       } catch {
         window.localStorage.removeItem("tile-uploader-state");
       }
@@ -53,11 +165,15 @@ export default function AppShell({ page }: { page: PageKey }) {
 
   useEffect(() => {
     if (!hydrated) return;
-    window.localStorage.setItem("tile-uploader-state", JSON.stringify(store));
+    try {
+      window.localStorage.setItem("tile-uploader-state", JSON.stringify(compactStore(store)));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? `Could not save browser state: ${nextError.message}` : String(nextError));
+    }
   }, [hydrated, store]);
 
   const matchedSelections = useMemo(
-    () => store.matches.filter((match) => match.product).length,
+    () => store.matches.reduce((total, match) => total + match.selectedProducts.length, 0),
     [store.matches]
   );
 
@@ -106,21 +222,33 @@ export default function AppShell({ page }: { page: PageKey }) {
     }
   }
 
-  function updateManualMatch(folderId: string, productId: string) {
-    setStore((current) => ({
-      ...current,
-      matches: current.matches.map((match) => {
+  function updateManualMatch(folderId: string, productIds: string[]) {
+    setStore((current) => {
+      let nextSelectedProducts: ShopifyProduct[] = [];
+      const matches = current.matches.map((match) => {
         if (match.folder.id !== folderId) return match;
-        const product = current.products.find((item) => item.id === productId) ?? null;
-        return { ...match, product, confidence: product ? "Exact" : "No Match", reason: product ? "Manually selected." : match.reason };
-      })
-    }));
+        const selectedProducts = productIds
+          .map((productId) => current.products.find((item) => item.id === productId))
+          .filter((product): product is ShopifyProduct => Boolean(product));
+        nextSelectedProducts = selectedProducts;
+        return {
+          ...match,
+          product: selectedProducts[0] ?? null,
+          selectedProducts,
+          reason: selectedProducts.length ? "Manually selected." : match.reason
+        };
+      });
+      const selections = nextSelectedProducts.length
+        ? current.selections.map((selection) => selection.folder.id === folderId ? { ...selection, products: nextSelectedProducts } : selection)
+        : current.selections.filter((selection) => selection.folder.id !== folderId);
+      return { ...current, matches, selections };
+    });
   }
 
-  function updateSelection(folder: TileFolder, product: ShopifyProduct, imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) {
+  function updateSelection(folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) {
     const nextSelection: UploadSelection = {
       folder,
-      product,
+      products,
       selectedFirstImagePath: firstPath,
       orderedImagePaths: imagePaths,
       mode,
@@ -238,7 +366,7 @@ function Dashboard({ store, matchedSelections }: { store: Store; matchedSelectio
   const cards = [
     ["Scanned folders", store.scan?.folders.length ?? 0],
     ["Fetched products", store.products.length],
-    ["Matched folders", matchedSelections],
+    ["Selected products", matchedSelections],
     ["Ready selections", store.selections.length]
   ];
 
@@ -291,7 +419,7 @@ function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy
   );
 }
 
-function MatchingPage({ busy, store, fetchProductsAndMatch, updateManualMatch }: { busy: boolean; store: Store; fetchProductsAndMatch: () => void; updateManualMatch: (folderId: string, productId: string) => void }) {
+function MatchingPage({ busy, store, fetchProductsAndMatch, updateManualMatch }: { busy: boolean; store: Store; fetchProductsAndMatch: () => void; updateManualMatch: (folderId: string, productIds: string[]) => void }) {
   return (
     <div className="space-y-4">
       <button disabled={busy} onClick={fetchProductsAndMatch} className="focus-ring inline-flex items-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white dark:bg-fern">
@@ -303,8 +431,8 @@ function MatchingPage({ busy, store, fetchProductsAndMatch, updateManualMatch }:
   );
 }
 
-function SelectorPage({ store, updateSelection }: { store: Store; updateSelection: (folder: TileFolder, product: ShopifyProduct, imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void }) {
-  const matches = store.matches.filter((match): match is ProductMatch & { product: ShopifyProduct } => Boolean(match.product));
+function SelectorPage({ store, updateSelection }: { store: Store; updateSelection: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void }) {
+  const matches = store.matches.filter((match) => match.selectedProducts.length > 0);
   return (
     <div className="space-y-4">
       {matches.map((match) => (
@@ -340,12 +468,12 @@ function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; r
       <div className="grid gap-4">
         {store.selections.map((selection) => (
           <div key={selection.folder.id} className="rounded-md border border-ink/10 bg-white p-4 dark:border-white/10 dark:bg-[#151d18]">
-            <p className="font-semibold">{selection.product.title}</p>
+            <p className="font-semibold">{selection.products.map((product) => product.title).join(", ")}</p>
             <p className="text-sm text-ink/55 dark:text-white/55">{selection.folder.relativePath}</p>
             <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
               <div>
                 <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Old first image</p>
-                {selection.product.firstImageUrl ? <img src={selection.product.firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="aspect-square rounded-md bg-mist dark:bg-white/10" />}
+                {selection.products[0]?.firstImageUrl ? <img src={selection.products[0].firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="aspect-square rounded-md bg-mist dark:bg-white/10" />}
               </div>
               <div>
                 <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Upload order</p>

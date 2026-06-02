@@ -11,7 +11,7 @@ const selection: UploadSelection = {
     relativePath: "60x60/LUZ-14MEA",
     images: []
   },
-  product: {
+  products: [{
     id: "gid://shopify/Product/1",
     title: "Luz Tile",
     handle: "luz-tile",
@@ -19,7 +19,7 @@ const selection: UploadSelection = {
     mediaIds: ["old-media"],
     firstImageUrl: null,
     totalMediaCount: 1
-  },
+  }],
   selectedFirstImagePath: "/first.jpg",
   orderedImagePaths: ["/first.jpg", "/second.jpg"],
   mode: "append-folder",
@@ -43,5 +43,21 @@ describe("uploader planning", () => {
 
     expect(job.removeWhiteBackground).toBe(true);
     expect(job.products[0].message).toContain("white backgrounds removed");
+  });
+
+  it("expands grouped selections into one dry-run product entry per target product", () => {
+    const job = createDryRunJob([{
+      ...selection,
+      products: [
+        ...selection.products,
+        {
+          ...selection.products[0],
+          id: "gid://shopify/Product/2",
+          title: "Min Tile"
+        }
+      ]
+    }]);
+
+    expect(job.products.map((product) => product.title)).toEqual(["Luz Tile", "Min Tile"]);
   });
 });

@@ -36,19 +36,20 @@ export type ShopifyProduct = {
   totalMediaCount: number;
 };
 
-export type MatchConfidence = "Exact" | "Partial" | "Multiple Matches" | "No Match";
+export type MatchConfidence = "Exact" | "Partial" | "Variant Group" | "Multiple Matches" | "No Match";
 
 export type ProductMatch = {
   folder: TileFolder;
   confidence: MatchConfidence;
   product: ShopifyProduct | null;
   candidates: ShopifyProduct[];
+  selectedProducts: ShopifyProduct[];
   reason: string;
 };
 
 export type UploadSelection = {
   folder: TileFolder;
-  product: ShopifyProduct;
+  products: ShopifyProduct[];
   selectedFirstImagePath: string;
   orderedImagePaths: string[];
   mode: UploadMode;

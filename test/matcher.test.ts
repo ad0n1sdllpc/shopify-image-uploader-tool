@@ -36,16 +36,20 @@ describe("matcher", () => {
 
     expect(match.product?.id).toBe("sku");
     expect(match.confidence).toBe("Exact");
+    expect(match.selectedProducts.map((item) => item.id)).toEqual(["sku"]);
   });
 
-  it("flags multiple exact matches for manual selection", () => {
-    const match = matchTileFolder(folder, [
-      product({ id: "one", variantsSkus: ["LUZ-14MEA"] }),
-      product({ id: "two", variantsSkus: ["LUZ_14MEA"] })
+  it("groups sibling products that end with the same folder tile code", () => {
+    const match = matchTileFolder({ ...folder, tileName: "11AW1" }, [
+      product({ id: "luz", title: "LUZ-11AW1", handle: "luz-11aw1" }),
+      product({ id: "min", title: "MIN-11AW1", handle: "min-11aw1" }),
+      product({ id: "vis", title: "VIS-11AW1", handle: "vis-11aw1" }),
+      product({ id: "other", title: "LUZ-11AW2", handle: "luz-11aw2" })
     ]);
 
-    expect(match.confidence).toBe("Multiple Matches");
-    expect(match.product).toBeNull();
+    expect(match.confidence).toBe("Variant Group");
+    expect(match.selectedProducts.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
+    expect(match.candidates.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
   });
 
   it("falls back to partial title matches", () => {
@@ -53,5 +57,12 @@ describe("matcher", () => {
 
     expect(match.confidence).toBe("Partial");
     expect(match.product?.id).toBe("partial");
+  });
+
+  it("keeps no-match behavior when no product includes the tile code", () => {
+    const match = matchTileFolder({ ...folder, tileName: "NOPE" }, [product({ id: "other", title: "LUZ-11AW2", handle: "luz-11aw2" })]);
+
+    expect(match.confidence).toBe("No Match");
+    expect(match.selectedProducts).toEqual([]);
   });
 });

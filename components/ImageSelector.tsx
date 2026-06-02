@@ -12,9 +12,9 @@ export default function ImageSelector({
   existingSelection,
   onChange
 }: {
-  match: ProductMatch & { product: ShopifyProduct };
+  match: ProductMatch;
   existingSelection?: UploadSelection;
-  onChange: (folder: TileFolder, product: ShopifyProduct, imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
+  onChange: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
 }) {
   const defaultOrder = useMemo(() => match.folder.images.map((image) => image.absolutePath), [match.folder.images]);
   const [order, setOrder] = useState(existingSelection?.orderedImagePaths ?? defaultOrder);
@@ -26,7 +26,7 @@ export default function ImageSelector({
   function persist(nextOrder = order, nextFirst = firstPath, nextMode = mode, nextDelete = deleteOldMedia) {
     const normalizedOrder = [nextFirst, ...nextOrder.filter((imagePath) => imagePath !== nextFirst)];
     setOrder(normalizedOrder);
-    onChange(match.folder, match.product, normalizedOrder, nextFirst, nextMode, nextDelete);
+    onChange(match.folder, match.selectedProducts, normalizedOrder, nextFirst, nextMode, nextDelete);
   }
 
   function onDragEnd(event: DragEndEvent) {
@@ -40,8 +40,11 @@ export default function ImageSelector({
     <section className="rounded-md border border-ink/10 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#151d18] dark:shadow-none">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <h2 className="font-semibold">{match.product.title}</h2>
+          <h2 className="font-semibold">{match.folder.tileName}</h2>
           <p className="text-sm text-ink/55 dark:text-white/55">{match.folder.relativePath}</p>
+          <p className="mt-1 text-xs text-ink/60 dark:text-white/60">
+            {match.selectedProducts.length} product(s): {match.selectedProducts.map((product) => product.title).join(", ")}
+          </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <select value={mode} onChange={(event) => { const next = event.target.value as UploadMode; setMode(next); persist(order, firstPath, next, deleteOldMedia); }} className="focus-ring rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white">
@@ -59,7 +62,7 @@ export default function ImageSelector({
       <div className="mt-4 grid gap-4 lg:grid-cols-[180px_1fr]">
         <div>
           <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Current Shopify first</p>
-          {match.product.firstImageUrl ? <img src={match.product.firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="flex aspect-square items-center justify-center rounded-md bg-mist text-xs text-ink/45 dark:bg-white/10 dark:text-white/45">No image</div>}
+          {match.selectedProducts[0]?.firstImageUrl ? <img src={match.selectedProducts[0].firstImageUrl ?? ""} alt="" className="aspect-square rounded-md object-cover" /> : <div className="flex aspect-square items-center justify-center rounded-md bg-mist text-xs text-ink/45 dark:bg-white/10 dark:text-white/45">No image</div>}
         </div>
 
         <DndContext sensors={sensors} onDragEnd={onDragEnd}>
