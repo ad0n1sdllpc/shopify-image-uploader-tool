@@ -94,9 +94,10 @@ type ProductNode = {
   handle: string;
   variants: { nodes: { sku: string | null }[] };
   media: {
-    nodes: { id: string; image?: { url: string | null } | null }[];
+    nodes: { id: string; image?: { url: string | null } | null; preview?: { image?: { url: string | null } | null } | null }[];
     pageInfo: { hasNextPage: boolean };
   };
+  images: { nodes: { url: string | null }[] };
   mediaCount: { count: number };
 };
 
@@ -112,12 +113,16 @@ const PRODUCTS_QUERY = `
         title
         handle
         variants(first: 100) { nodes { sku } }
-        media(first: 100, sortKey: POSITION) {
+        media(first: 250, sortKey: POSITION) {
           nodes {
             id
+            preview { image { url } }
             ... on MediaImage { image { url } }
           }
           pageInfo { hasNextPage }
+        }
+        images(first: 250) {
+          nodes { url }
         }
         mediaCount { count }
       }
@@ -134,14 +139,18 @@ export async function fetchProducts(): Promise<ShopifyProduct[]> {
     const data: ProductsResponse = await shopifyGraphql<ProductsResponse>(PRODUCTS_QUERY, { cursor });
 
     for (const product of data.products.nodes) {
+      const mediaImageUrls = uniqueUrls([
+        ...product.media.nodes.map(mediaImageUrl),
+        ...product.images.nodes.map((image) => image.url)
+      ]);
       products.push({
         id: product.id,
         title: product.title,
         handle: product.handle,
         variantsSkus: product.variants.nodes.map((variant) => variant.sku).filter(Boolean) as string[],
         mediaIds: product.media.nodes.map((media) => media.id),
-        firstImageUrl: product.media.nodes[0]?.image?.url ?? null,
-        mediaImageUrls: product.media.nodes.map((media) => media.image?.url).filter(Boolean) as string[],
+        firstImageUrl: mediaImageUrls[0] ?? null,
+        mediaImageUrls,
         totalMediaCount: product.mediaCount.count
       });
     }
@@ -150,6 +159,14 @@ export async function fetchProducts(): Promise<ShopifyProduct[]> {
   } while (cursor);
 
   return products;
+}
+
+function mediaImageUrl(media: ProductNode["media"]["nodes"][number]) {
+  return media.image?.url ?? media.preview?.image?.url ?? null;
+}
+
+function uniqueUrls(urls: (string | null | undefined)[]) {
+  return Array.from(new Set(urls.filter((url): url is string => Boolean(url))));
 }
 
 export async function fetchProductMediaIds(productId: string) {

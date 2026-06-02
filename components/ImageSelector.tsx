@@ -22,6 +22,11 @@ export default function ImageSelector({
   const [mode, setMode] = useState<UploadMode>(existingSelection?.mode ?? "append-folder");
   const [deleteOldMedia, setDeleteOldMedia] = useState(existingSelection?.deleteOldMedia ?? false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const representativeProduct = useMemo(() => {
+    return [...match.selectedProducts].sort((first, second) => productMediaUrls(second).length - productMediaUrls(first).length || second.totalMediaCount - first.totalMediaCount)[0] ?? null;
+  }, [match.selectedProducts]);
+  const shopifyMediaUrls = representativeProduct ? productMediaUrls(representativeProduct) : [];
+  const shopifyMediaCount = representativeProduct?.totalMediaCount ?? shopifyMediaUrls.length;
 
   function persist(nextOrder = order, nextFirst = firstPath, nextMode = mode, nextDelete = deleteOldMedia) {
     const normalizedOrder = [nextFirst, ...nextOrder.filter((imagePath) => imagePath !== nextFirst)];
@@ -43,7 +48,7 @@ export default function ImageSelector({
           <h2 className="font-semibold">{match.folder.tileName}</h2>
           <p className="text-sm text-ink/55 dark:text-white/55">{match.folder.relativePath}</p>
           <p className="mt-1 text-xs text-ink/60 dark:text-white/60">
-            {match.selectedProducts.length} product(s): {match.selectedProducts.map((product) => product.title).join(", ")}
+            {match.selectedProducts.length} product(s) selected
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -62,11 +67,7 @@ export default function ImageSelector({
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(260px,360px)_1fr]">
         <div>
           <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Current Shopify media</p>
-          <div className="space-y-3">
-            {match.selectedProducts.map((product) => (
-              <ShopifyMediaStrip key={product.id} product={product} />
-            ))}
-          </div>
+          <ShopifyMediaGallery title={match.folder.tileName} mediaUrls={shopifyMediaUrls} mediaCount={shopifyMediaCount} />
         </div>
 
         <div>
@@ -97,20 +98,24 @@ export default function ImageSelector({
   );
 }
 
-function ShopifyMediaStrip({ product }: { product: ShopifyProduct }) {
-  const mediaUrls = product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : [];
+function productMediaUrls(product: ShopifyProduct) {
+  return product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : [];
+}
 
+function ShopifyMediaGallery({ title, mediaUrls, mediaCount }: { title: string; mediaUrls: string[]; mediaCount: number }) {
   return (
     <div className="rounded-md border border-ink/10 bg-mist/60 p-2 dark:border-white/10 dark:bg-[#0f1511]">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="truncate text-xs font-semibold text-ink/70 dark:text-white/75" title={product.title}>{product.title}</p>
-        <span className="shrink-0 text-[11px] text-ink/45 dark:text-white/45">{product.totalMediaCount} media</span>
+        <p className="truncate text-xs font-semibold text-ink/70 dark:text-white/75" title={title}>{title}</p>
+        <span className="shrink-0 text-[11px] text-ink/45 dark:text-white/45">
+          {mediaUrls.length} shown / {mediaCount} media
+        </span>
       </div>
       {mediaUrls.length > 0 ? (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-3">
           {mediaUrls.map((url, index) => (
-            <div key={`${product.id}-${url}-${index}`} className="relative">
-              <img src={url} alt={`${product.title} media ${index + 1}`} className="aspect-square w-full rounded object-cover" />
+            <div key={`${url}-${index}`} className="relative">
+              <img src={url} alt={`${title} Shopify media ${index + 1}`} className="aspect-square w-full rounded object-cover" />
               {index === 0 ? <span className="absolute left-1 top-1 rounded bg-moss px-1.5 py-0.5 text-[10px] font-semibold text-white dark:bg-fern">First</span> : null}
             </div>
           ))}

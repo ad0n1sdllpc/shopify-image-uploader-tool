@@ -53,6 +53,13 @@ type PersistedStore = {
 
 const emptyStore: Store = { scan: null, products: [], matches: [], selections: [], lastJob: null };
 
+function normalizeProduct(product: ShopifyProduct): ShopifyProduct {
+  return {
+    ...product,
+    mediaImageUrls: product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : []
+  };
+}
+
 function compactStore(store: Store): PersistedStore {
   return {
     scan: store.scan,
@@ -79,7 +86,7 @@ function compactStore(store: Store): PersistedStore {
 
 function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): Store {
   const scan = saved.scan ?? null;
-  const products = saved.products ?? [];
+  const products = (saved.products ?? []).map((product) => normalizeProduct(product));
   const foldersById = new Map(scan?.folders.map((folder) => [folder.id, folder]) ?? []);
   const productsById = new Map(products.map((product) => [product.id, product]));
 
