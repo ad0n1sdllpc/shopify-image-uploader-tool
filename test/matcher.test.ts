@@ -52,6 +52,19 @@ describe("matcher", () => {
     expect(match.candidates.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
   });
 
+  it("does not group tile codes embedded inside a longer suffix segment", () => {
+    const match = matchTileFolder({ ...folder, tileName: "L31" }, [
+      product({ id: "luz", title: "LUZ-L31", handle: "luz-l31" }),
+      product({ id: "min", title: "MIN-L31", handle: "min-l31" }),
+      product({ id: "vis", title: "VIS-L31", handle: "vis-l31" }),
+      product({ id: "luz-cl", title: "LUZ-CL31", handle: "luz-cl31" }),
+      product({ id: "min-36cl", title: "MIN-36CL31", handle: "min-36cl31" })
+    ]);
+
+    expect(match.confidence).toBe("Variant Group");
+    expect(match.selectedProducts.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
+  });
+
   it("falls back to partial title matches", () => {
     const match = matchTileFolder(folder, [product({ id: "partial", title: "Premium Luz 14MEA Tile", handle: "premium-luz-tile" })]);
 

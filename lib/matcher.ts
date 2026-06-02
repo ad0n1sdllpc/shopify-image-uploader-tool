@@ -11,10 +11,22 @@ function exactMatches(folderName: string, products: ShopifyProduct[], selector: 
   return products.filter((product) => selector(product).some((value) => normalizeName(value) === folderName));
 }
 
+function normalizedSegments(value: string) {
+  return value
+    .replace(/\.[^.]+$/, "")
+    .split(/[\s\-_]+/)
+    .map((segment) => normalizeName(segment))
+    .filter(Boolean);
+}
+
+function hasTileCodeSegment(value: string, folderName: string) {
+  return normalizedSegments(value).some((segment) => segment === folderName);
+}
+
 function suffixMatches(folderName: string, products: ShopifyProduct[]) {
   return products.filter((product) => {
     const values = [product.title, product.handle, ...product.variantsSkus];
-    return values.some((value) => normalizeName(value).endsWith(folderName));
+    return values.some((value) => hasTileCodeSegment(value, folderName));
   });
 }
 
