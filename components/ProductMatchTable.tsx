@@ -12,7 +12,7 @@ export default function ProductMatchTable({
   onManualMatch: (folderId: string, productIds: string[]) => void;
 }) {
   if (matches.length === 0) {
-    return <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">Fetch products after scanning folders to generate matches.</p>;
+    return <p className="admin-card p-5 text-sm admin-muted">Fetch products after scanning folders to generate matches.</p>;
   }
 
   const noMatches = matches.filter((match) => match.confidence === "No Match");
@@ -23,9 +23,9 @@ export default function ProductMatchTable({
       {matchedRows.length > 0 ? <MatchTable matches={matchedRows} products={products} onManualMatch={onManualMatch} /> : null}
       {noMatches.length > 0 ? (
         <section className="space-y-2">
-          <div>
+          <div className="admin-card border-clay/25 bg-clay/5 p-4 dark:border-clay/30 dark:bg-clay/10">
             <h2 className="text-sm font-semibold">No matches</h2>
-            <p className="text-xs text-ink/55 dark:text-white/55">{noMatches.length} folder(s) need manual product selection.</p>
+            <p className="text-xs admin-muted">{noMatches.length} folder(s) need manual product selection.</p>
           </div>
           <MatchTable matches={noMatches} products={products} onManualMatch={onManualMatch} />
         </section>
@@ -44,49 +44,53 @@ function MatchTable({
   onManualMatch: (folderId: string, productIds: string[]) => void;
 }) {
   if (matches.length === 0) {
-    return <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No rows in this section.</p>;
+    return <p className="admin-card p-5 text-sm admin-muted">No rows in this section.</p>;
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-ink/10 bg-white dark:border-white/10 dark:bg-[#151d18]">
-      <table className="w-full min-w-[860px] text-left text-sm">
-        <thead className="bg-mist text-xs uppercase text-ink/55 dark:bg-white/5 dark:text-white/55">
+    <div className="admin-card overflow-x-auto">
+      <table className="admin-table">
+        <thead className="admin-table-head sticky top-0 z-10">
           <tr>
-            <th className="px-4 py-3">Folder</th>
-            <th className="px-4 py-3">Confidence</th>
-            <th className="px-4 py-3">Product</th>
-            <th className="px-4 py-3">Reason</th>
-            <th className="px-4 py-3">Manual Selection</th>
+            <th className="px-3 py-2">Folder</th>
+            <th className="px-3 py-2">Confidence</th>
+            <th className="px-3 py-2">Selected products</th>
+            <th className="px-3 py-2">Reason</th>
+            <th className="px-3 py-2">Manual selection</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-ink/10 dark:divide-white/10">
+        <tbody>
           {matches.map((match) => (
-            <tr key={match.folder.id}>
-              <td className="px-4 py-3">
+            <tr key={match.folder.id} className="admin-table-row align-top">
+              <td className="px-3 py-2">
                 <p className="font-medium">{match.folder.tileName}</p>
-                <p className="text-xs text-ink/50 dark:text-white/50">{match.folder.relativePath}</p>
+                <p className="text-xs admin-muted">{match.folder.relativePath}</p>
               </td>
-              <td className="px-4 py-3">
-                <span className={`rounded px-2 py-1 text-xs font-semibold ${badgeClass(match.confidence)}`}>{match.confidence}</span>
+              <td className="px-3 py-2">
+                <span className={`admin-badge ${badgeClass(match.confidence)}`}>{match.confidence}</span>
               </td>
-              <td className="px-4 py-3">
+              <td className="px-3 py-2">
                 {match.selectedProducts.length > 0 ? (
                   <div>
-                    <p>{match.selectedProducts.length} product(s) selected</p>
-                    <p className="mt-1 text-xs text-ink/50 dark:text-white/50">{match.selectedProducts.map((product) => product.title).join(", ")}</p>
+                    <p className="text-xs font-semibold admin-muted">{match.selectedProducts.length} product(s) selected</p>
+                    <div className="mt-1 flex max-w-md flex-wrap gap-1">
+                      {match.selectedProducts.map((product) => (
+                        <span key={product.id} className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">{product.title}</span>
+                      ))}
+                    </div>
                   </div>
                 ) : (
-                  "Needs selection"
+                  <span className="text-sm admin-muted">Needs selection</span>
                 )}
               </td>
-              <td className="px-4 py-3 text-ink/60 dark:text-white/60">{match.reason}</td>
-              <td className="px-4 py-3">
+              <td className="max-w-sm px-3 py-2 text-sm admin-muted">{match.reason}</td>
+              <td className="px-3 py-2">
                 {match.candidates.length > 1 ? (
-                  <div className="max-h-44 space-y-2 overflow-auto rounded-md border border-ink/10 p-2 dark:border-white/10">
+                  <div className="max-h-44 min-w-72 space-y-1 overflow-auto rounded-md border border-line bg-mist/60 p-2 dark:border-white/10 dark:bg-white/5">
                     {match.candidates.map((product) => {
                       const checked = match.selectedProducts.some((selectedProduct) => selectedProduct.id === product.id);
                       return (
-                        <label key={product.id} className="flex items-start gap-2 text-xs">
+                        <label key={product.id} className={`flex items-start gap-2 rounded px-2 py-1.5 text-xs ${checked ? "bg-white text-ink dark:bg-white/10 dark:text-white" : "text-subdued dark:text-white/60"}`}>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -97,11 +101,11 @@ function MatchTable({
                                 : currentIds.filter((productId) => productId !== product.id);
                               onManualMatch(match.folder.id, nextIds);
                             }}
-                            className="mt-0.5"
+                            className="mt-0.5 h-3.5 w-3.5 rounded border-line text-moss dark:border-white/20 dark:bg-[#0f1115]"
                           />
                           <span>
                             <span className="block font-medium">{product.title}</span>
-                            <span className="text-ink/50 dark:text-white/50">{product.handle}</span>
+                            <span className="admin-muted">{product.handle}</span>
                           </span>
                         </label>
                       );
@@ -111,7 +115,7 @@ function MatchTable({
                   <select
                     value={match.selectedProducts[0]?.id ?? ""}
                     onChange={(event) => onManualMatch(match.folder.id, event.target.value ? [event.target.value] : [])}
-                    className="focus-ring w-full rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white"
+                    className="admin-input w-full min-w-72"
                   >
                     <option value="">Choose product</option>
                     {products.map((product) => (

@@ -50,49 +50,49 @@ export default function ImageSelector({
   }
 
   return (
-    <section className="rounded-md border border-ink/10 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#151d18] dark:shadow-none">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+    <section className="admin-card p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-moss/10 px-2 py-0.5 text-xs font-semibold text-moss dark:bg-fern/15 dark:text-[#9fce96]">
+            <span className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">
               {position} of {total}
             </span>
             <h2 className="font-semibold">{match.folder.tileName}</h2>
           </div>
-          <p className="text-sm text-ink/55 dark:text-white/55">{match.folder.relativePath}</p>
-          <p className="mt-1 text-xs text-ink/60 dark:text-white/60">
+          <p className="text-sm admin-muted">{match.folder.relativePath}</p>
+          <p className="mt-1 text-xs admin-muted">
             {match.selectedProducts.length} product(s) selected
           </p>
           {selectedProductLabels.length > 0 ? (
-            <p className="mt-1 text-xs text-ink/55 dark:text-white/55">
+            <p className="mt-1 text-xs admin-muted">
               Selected: {selectedProductLabels.join(" / ")}
             </p>
           ) : null}
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <select value={mode} onChange={(event) => { const next = event.target.value as UploadMode; setMode(next); persist(order, firstPath, next, deleteOldMedia); }} className="focus-ring rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white">
+        <div className="flex flex-wrap gap-2">
+          <select value={mode} onChange={(event) => { const next = event.target.value as UploadMode; setMode(next); persist(order, firstPath, next, deleteOldMedia); }} className="admin-input min-w-64">
             <option value="append-folder">Replace first + upload all</option>
             <option value="replace-first">Replace first only</option>
             <option value="replace-gallery">Replace full gallery</option>
           </select>
-          <label className="flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-sm dark:border-white/15">
-            <input type="checkbox" checked={deleteOldMedia} onChange={(event) => { setDeleteOldMedia(event.target.checked); persist(order, firstPath, mode, event.target.checked); }} className="dark:bg-[#0f1511]" />
+          <label className="admin-button cursor-pointer">
+            <input type="checkbox" checked={deleteOldMedia} onChange={(event) => { setDeleteOldMedia(event.target.checked); persist(order, firstPath, mode, event.target.checked); }} className="h-4 w-4 rounded border-line text-moss dark:border-white/20 dark:bg-[#0f1115]" />
             Delete old media after verification
           </label>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(260px,360px)_1fr]">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(300px,390px)_1fr]">
         <div>
-          <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Current Shopify media</p>
+          <p className="mb-2 text-xs font-semibold uppercase admin-muted">Current Shopify media</p>
           <ShopifyMediaGallery title={match.folder.tileName} mediaUrls={shopifyMediaUrls} mediaCount={shopifyMediaCount} />
         </div>
 
         <div>
-          <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Local upload order</p>
+          <p className="mb-2 text-xs font-semibold uppercase admin-muted">Local upload order</p>
           <DndContext sensors={sensors} onDragEnd={onDragEnd}>
             <SortableContext items={order} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6 2xl:grid-cols-8">
                 {order.map((imagePath) => {
                   const image = match.folder.images.find((item) => item.absolutePath === imagePath);
                   return image ? (
@@ -134,24 +134,34 @@ function productGroupLabel(product: ShopifyProduct, tileName: string) {
 
 function ShopifyMediaGallery({ title, mediaUrls, mediaCount }: { title: string; mediaUrls: string[]; mediaCount: number }) {
   return (
-    <div className="rounded-md border border-ink/10 bg-mist/60 p-2 dark:border-white/10 dark:bg-[#0f1511]">
+    <div className="admin-panel p-2">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="truncate text-xs font-semibold text-ink/70 dark:text-white/75" title={title}>{title}</p>
-        <span className="shrink-0 text-[11px] text-ink/45 dark:text-white/45">
+        <p className="truncate text-xs font-semibold" title={title}>{title}</p>
+        <span className="shrink-0 text-[11px] admin-muted">
           {mediaUrls.length} shown / {mediaCount} media
         </span>
       </div>
       {mediaUrls.length > 0 ? (
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-3">
-          {mediaUrls.map((url, index) => (
-            <div key={`${url}-${index}`} className="relative">
-              <img src={url} alt={`${title} Shopify media ${index + 1}`} className="aspect-square w-full rounded object-cover" />
-              {index === 0 ? <span className="absolute left-1 top-1 rounded bg-moss px-1.5 py-0.5 text-[10px] font-semibold text-white dark:bg-fern">First</span> : null}
+        <>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-3">
+            {mediaUrls.map((url, index) => (
+              <div key={`${url}-${index}`} className="relative">
+                <img src={url} alt={`${title} Shopify media ${index + 1}`} className="aspect-square w-full rounded border border-line object-cover dark:border-white/10" />
+                {index === 0 ? <span className="absolute left-1 top-1 rounded bg-moss px-1.5 py-0.5 text-[10px] font-semibold text-white">First</span> : null}
+              </div>
+            ))}
+          </div>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-semibold text-moss dark:text-[#8fd6bc]">Expanded preview</summary>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {mediaUrls.slice(0, 4).map((url, index) => (
+                <img key={`preview-${url}-${index}`} src={url} alt={`${title} expanded Shopify media ${index + 1}`} className="aspect-video w-full rounded border border-line object-cover dark:border-white/10" />
+              ))}
             </div>
-          ))}
-        </div>
+          </details>
+        </>
       ) : (
-        <div className="flex aspect-[3/1] items-center justify-center rounded bg-white text-xs text-ink/45 dark:bg-white/10 dark:text-white/45">No media</div>
+        <div className="flex aspect-[3/1] items-center justify-center rounded bg-white text-xs admin-muted dark:bg-white/10">No media</div>
       )}
     </div>
   );
@@ -162,13 +172,13 @@ function SortableImage({ image, selected, onSelect }: { image: LocalImage; selec
   const style = { transform: CSS.Transform.toString(transform), transition };
 
   return (
-    <div ref={setNodeRef} style={style} className={`relative rounded-md border bg-white p-2 dark:bg-[#0f1511] ${selected ? "border-clay ring-2 ring-clay" : "border-ink/10 dark:border-white/10"}`}>
-      <button {...attributes} {...listeners} className="absolute left-3 top-3 z-10 rounded bg-white/90 p-1 text-ink/55 shadow dark:bg-black/70 dark:text-white/70" title="Drag to reorder">
+    <div ref={setNodeRef} style={style} className={`relative rounded-md border bg-white p-2 dark:bg-[#0f1115] ${selected ? "border-clay ring-2 ring-clay" : "border-line dark:border-white/10"}`}>
+      <button {...attributes} {...listeners} className="absolute left-3 top-3 z-10 rounded bg-white/90 p-1 text-subdued shadow dark:bg-black/70 dark:text-white/70" title="Drag to reorder">
         <GripVertical size={15} />
       </button>
       <button onClick={onSelect} className="focus-ring block w-full text-left" title="Mark as first image">
         <img src={image.previewUrl} alt={image.name} className="aspect-square w-full rounded object-cover" />
-        <span className="mt-2 block truncate text-xs text-ink/65 dark:text-white/65">{image.name}</span>
+        <span className="mt-2 block truncate text-xs admin-muted">{image.name}</span>
       </button>
       {selected ? (
         <span className="absolute right-3 top-3 flex items-center gap-1 rounded bg-clay px-2 py-1 text-xs font-semibold text-white">

@@ -6,14 +6,18 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#17201b",
-        moss: "#37543d",
-        fern: "#5d7f55",
-        clay: "#b25d43",
-        mist: "#f5f7f2"
+        ink: "#202223",
+        moss: "#008060",
+        fern: "#95bf47",
+        clay: "#d72c0d",
+        mist: "#f6f6f7",
+        line: "#dfe3e8",
+        subdued: "#6d7175",
+        surface: "#ffffff",
+        canvas: "#f1f2f3"
       },
       boxShadow: {
-        soft: "0 14px 40px rgba(23,32,27,0.10)"
+        soft: "0 1px 0 rgba(0,0,0,0.05), 0 8px 24px rgba(0,0,0,0.08)"
       }
     }
   },

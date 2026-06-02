@@ -190,6 +190,22 @@ export default function AppShell({ page }: { page: PageKey }) {
   );
   const readySelections = useMemo(() => activeSelections(store.matches, store.selections), [store.matches, store.selections]);
   const includedReadySelections = useMemo(() => includedSelections(readySelections, store.excludedReviewProductIds), [readySelections, store.excludedReviewProductIds]);
+  const pageTitle = navItems.find((item) => item.key === page)?.label ?? "Dashboard";
+  const includedProductCount = includedReadySelections.reduce((total, selection) => total + selection.products.length, 0);
+  const workflowStats = [
+    ["Folders", store.scan?.folders.length ?? 0],
+    ["Products", store.products.length],
+    ["Matched", matchedSelections],
+    ["Included", includedProductCount]
+  ];
+  const primaryAction = {
+    dashboard: { href: "/scan", label: "Start scan" },
+    scan: { href: "/matching", label: "Match products" },
+    matching: { href: "/selector", label: "Select images" },
+    selector: { href: "/review", label: "Review upload" },
+    review: { href: "/history", label: "View history" },
+    history: { href: "/review", label: "Back to review" }
+  }[page];
 
   async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, init);
@@ -332,15 +348,15 @@ export default function AppShell({ page }: { page: PageKey }) {
   }, [page]);
 
   return (
-    <div className="min-h-screen bg-mist text-ink transition-colors dark:bg-[#0f1511] dark:text-[#edf3ec]">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-ink/10 bg-white px-4 py-5 dark:border-white/10 dark:bg-[#131b16] lg:block">
-        <div className="mb-7 flex items-center gap-3 px-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-moss text-white dark:bg-fern">
-            <UploadCloud size={21} />
+    <div className="min-h-screen bg-canvas text-ink transition-colors dark:bg-[#0f1115] dark:text-[#f1f2f3]">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-line bg-surface px-3 py-4 dark:border-white/10 dark:bg-[#171a1f] lg:block">
+        <div className="mb-5 flex items-center gap-3 rounded-md border border-line bg-mist px-3 py-3 dark:border-white/10 dark:bg-white/5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-moss text-white">
+            <UploadCloud size={19} />
           </div>
-          <div>
-            <p className="text-sm font-semibold">Tile Uploader</p>
-            <p className="text-xs text-ink/55 dark:text-white/55">Local Shopify media tool</p>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">Tile Uploader</p>
+            <p className="truncate text-xs admin-muted">Shopify media ops</p>
           </div>
         </div>
         <nav className="space-y-1">
@@ -352,7 +368,7 @@ export default function AppShell({ page }: { page: PageKey }) {
                 key={item.key}
                 href={item.href}
                 className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition ${
-                  active ? "bg-moss text-white dark:bg-fern" : "text-ink/70 hover:bg-mist hover:text-ink dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
+                  active ? "bg-[#e5f3ee] text-moss dark:bg-[#113d31] dark:text-[#8fd6bc]" : "text-subdued hover:bg-mist hover:text-ink dark:text-white/60 dark:hover:bg-white/10 dark:hover:text-white"
                 }`}
               >
                 <Icon size={18} />
@@ -361,29 +377,43 @@ export default function AppShell({ page }: { page: PageKey }) {
             );
           })}
         </nav>
-        <div className="mt-6 border-t border-ink/10 pt-4 dark:border-white/10">
+        <div className="mt-5 border-t border-line pt-4 dark:border-white/10">
           <ThemeToggle />
         </div>
       </aside>
 
       <main className="lg:pl-64">
-        <div className="mx-auto max-w-7xl px-5 py-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <header className="sticky top-0 z-30 border-b border-line bg-surface/95 px-4 py-3 backdrop-blur dark:border-white/10 dark:bg-[#171a1f]/95">
+          <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold tracking-normal">{navItems.find((item) => item.key === page)?.label}</h1>
-              <p className="mt-1 text-sm text-ink/60 dark:text-white/60">Scan local images, match products, choose order, then upload with verification.</p>
+              <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
+              <p className="mt-0.5 text-sm admin-muted">Scan, match, select, review, and upload verified Shopify media.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 lg:hidden">
-              <div className="flex flex-wrap gap-2">
-                {navItems.map((item) => (
-                  <Link key={item.key} href={item.href} className={`rounded-md border px-3 py-2 text-xs ${item.key === page ? "border-moss bg-moss text-white dark:border-fern dark:bg-fern" : "border-ink/10 bg-white dark:border-white/10 dark:bg-white/5 dark:text-white/75"}`}>
-                    {item.label}
-                  </Link>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="hidden flex-wrap items-center gap-1 rounded-md border border-line bg-mist p-1 dark:border-white/10 dark:bg-white/5 md:flex">
+                {workflowStats.map(([label, value]) => (
+                  <div key={label} className="min-w-20 rounded bg-surface px-2.5 py-1.5 text-center text-xs shadow-sm dark:bg-white/10">
+                    <p className="font-semibold">{value}</p>
+                    <p className="admin-muted">{label}</p>
+                  </div>
                 ))}
               </div>
               <ThemeToggle />
+              <Link href={primaryAction.href} className="admin-button-primary hidden sm:inline-flex">
+                {primaryAction.label}
+              </Link>
             </div>
           </div>
+          <div className="mx-auto mt-3 flex max-w-[1500px] gap-2 overflow-x-auto lg:hidden">
+            {navItems.map((item) => (
+              <Link key={item.key} href={item.href} className={`shrink-0 rounded-md border px-3 py-2 text-xs font-medium ${item.key === page ? "border-moss bg-[#e5f3ee] text-moss dark:border-[#2f8f72] dark:bg-[#113d31] dark:text-[#8fd6bc]" : "border-line bg-white text-subdued dark:border-white/10 dark:bg-white/5 dark:text-white/70"}`}>
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </header>
+
+        <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6">
 
           {error ? <div className="mb-4 rounded-md border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay dark:bg-clay/20 dark:text-[#ffb39d]">{error}</div> : null}
 
@@ -417,28 +447,87 @@ export default function AppShell({ page }: { page: PageKey }) {
 }
 
 function Dashboard({ store, matchedSelections, readySelectionCount }: { store: Store; matchedSelections: number; readySelectionCount: number }) {
-  const cards = [
-    ["Scanned folders", store.scan?.folders.length ?? 0],
+  const folderCount = store.scan?.folders.length ?? 0;
+  const latestJob = store.lastJob;
+  const metrics: [string, number][] = [
+    ["Scanned folders", folderCount],
     ["Fetched products", store.products.length],
     ["Selected products", matchedSelections],
-    ["Ready selections", readySelectionCount]
+    ["Included folders", readySelectionCount]
+  ];
+  const steps: [string, boolean][] = [
+    ["Folder Scan", folderCount > 0],
+    ["Product Matching", store.matches.length > 0],
+    ["Image Selector", readySelectionCount > 0],
+    ["Review Upload", Boolean(latestJob)]
   ];
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
-      {cards.map(([label, value]) => (
-        <div key={label} className="rounded-md border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#151d18] dark:shadow-none">
-          <p className="text-sm text-ink/55 dark:text-white/55">{label}</p>
-          <p className="mt-2 text-3xl font-semibold">{value}</p>
+    <div className="space-y-4">
+      <section className="admin-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">Workflow overview</h2>
+            <p className="text-sm admin-muted">Bulk tile media work stays ready for review by default.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/scan" className="admin-button">Scan</Link>
+            <Link href="/matching" className="admin-button">Match</Link>
+            <Link href="/review" className="admin-button-primary">Review</Link>
+          </div>
         </div>
-      ))}
-      <div className="rounded-md border border-ink/10 bg-white p-5 dark:border-white/10 dark:bg-[#151d18] md:col-span-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-moss dark:text-[#9fce96]">
+        <div className="mt-4 grid gap-2 md:grid-cols-4">
+          {steps.map(([label, done], index) => (
+            <div key={String(label)} className="admin-panel px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase admin-muted">Step {index + 1}</span>
+                <span className={`admin-badge ${done ? "bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]" : "bg-mist text-subdued dark:bg-white/10 dark:text-white/55"}`}>
+                  {done ? "Ready" : "Open"}
+                </span>
+              </div>
+              <p className="mt-2 text-sm font-semibold">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {metrics.map(([label, value]) => (
+          <div key={String(label)} className="admin-card px-4 py-3">
+            <p className="text-xs font-semibold uppercase admin-muted">{label}</p>
+            <p className="mt-1 text-2xl font-semibold">{value}</p>
+          </div>
+        ))}
+      </section>
+
+      <section className="admin-card p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-moss dark:text-[#8fd6bc]">
           <CheckCircle2 size={18} />
-          Workflow
+          Latest upload job
         </div>
-        <p className="mt-2 text-sm text-ink/65 dark:text-white/65">Start with Folder Scan, fetch and match Shopify products, select the first image and order, then review with dry-run before live upload.</p>
-      </div>
+        {latestJob ? (
+          <div className="mt-3 grid gap-3 text-sm md:grid-cols-4">
+            <div>
+              <p className="text-xs uppercase admin-muted">Job</p>
+              <p className="font-medium">{latestJob.id.slice(0, 8)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase admin-muted">Status</p>
+              <p className="font-medium capitalize">{latestJob.status}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase admin-muted">Products</p>
+              <p className="font-medium">{latestJob.products.length}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase admin-muted">Mode</p>
+              <p className="font-medium">{latestJob.dryRun ? "Dry run" : "Live upload"}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm admin-muted">No upload job has been run yet.</p>
+        )}
+      </section>
     </div>
   );
 }
@@ -446,28 +535,40 @@ function Dashboard({ store, matchedSelections, readySelectionCount }: { store: S
 function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy: boolean; folderPath: string; setFolderPath: (path: string) => void; scanFolders: () => void; scan: ScanResult | null }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-ink/10 bg-white p-5 dark:border-white/10 dark:bg-[#151d18]">
-        <label className="text-sm font-medium">Local TILES folder path</label>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} className="focus-ring min-w-0 flex-1 rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white" />
-          <button disabled={busy} onClick={scanFolders} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white dark:bg-fern">
+      <section className="admin-card p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-0 flex-1">
+            <span className="text-xs font-semibold uppercase admin-muted">Local TILES folder path</span>
+            <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} className="admin-input mt-1 w-full" />
+          </label>
+          <button disabled={busy} onClick={scanFolders} className="admin-button-primary">
             <FolderSearch size={17} />
             Scan
           </button>
         </div>
-      </div>
+        {scan ? (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs admin-muted">
+            <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{scan.folders.length} folders</span>
+            <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">Root: {scan.rootPath}</span>
+            <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{new Date(scan.scannedAt).toLocaleString()}</span>
+          </div>
+        ) : null}
+      </section>
       {scan ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {scan.folders.map((folder) => (
-            <div key={folder.id} className="rounded-md border border-ink/10 bg-white p-4 dark:border-white/10 dark:bg-[#151d18]">
-              <p className="text-sm font-semibold">{folder.size} / {folder.tileName}</p>
-              <p className="mt-1 truncate text-xs text-ink/50 dark:text-white/50">{folder.relativePath}</p>
-              <div className="mt-3 grid grid-cols-5 gap-2">
-                {folder.images.slice(0, 5).map((image) => <img key={image.id} src={image.previewUrl} alt={image.name} className="aspect-square rounded-md object-cover" />)}
+            <div key={folder.id} className="admin-card flex items-center gap-3 p-3">
+              <div className="grid w-24 shrink-0 grid-cols-2 gap-1">
+                {folder.images.slice(0, 4).map((image) => <img key={image.id} src={image.previewUrl} alt={image.name} className="aspect-square rounded object-cover" />)}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{folder.tileName}</p>
+                <p className="truncate text-xs admin-muted">{folder.size} - {folder.relativePath}</p>
+                <p className="mt-1 text-xs admin-muted">{folder.images.length} image(s)</p>
               </div>
             </div>
           ))}
-        </div>
+        </section>
       ) : null}
     </div>
   );
@@ -476,10 +577,16 @@ function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy
 function MatchingPage({ busy, store, fetchProductsAndMatch, updateManualMatch }: { busy: boolean; store: Store; fetchProductsAndMatch: () => void; updateManualMatch: (folderId: string, productIds: string[]) => void }) {
   return (
     <div className="space-y-4">
-      <button disabled={busy} onClick={fetchProductsAndMatch} className="focus-ring inline-flex items-center gap-2 rounded-md bg-moss px-4 py-2 text-sm font-medium text-white dark:bg-fern">
-        <RefreshCw size={17} />
-        Fetch Products And Match
-      </button>
+      <section className="admin-card flex flex-wrap items-center justify-between gap-3 p-4">
+        <div>
+          <h2 className="text-base font-semibold">Product matching</h2>
+          <p className="text-sm admin-muted">{store.scan?.folders.length ?? 0} scanned folder(s), {store.products.length} Shopify product(s), {store.matches.length} match row(s).</p>
+        </div>
+        <button disabled={busy} onClick={fetchProductsAndMatch} className="admin-button-primary">
+          <RefreshCw size={17} />
+          Fetch Products And Match
+        </button>
+      </section>
       <ProductMatchTable matches={store.matches} products={store.products} onManualMatch={updateManualMatch} />
     </div>
   );
@@ -489,6 +596,15 @@ function SelectorPage({ store, updateSelection }: { store: Store; updateSelectio
   const matches = store.matches.filter((match) => match.selectedProducts.length > 0);
   return (
     <div className="space-y-4">
+      {matches.length > 0 ? (
+        <div className="admin-card flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <h2 className="text-base font-semibold">Image selection queue</h2>
+            <p className="text-sm admin-muted">Defaults are already active for untouched folders.</p>
+          </div>
+          <span className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">{matches.length} folder(s)</span>
+        </div>
+      ) : null}
       {matches.map((match, index) => (
         <ImageSelector
           key={match.folder.id}
@@ -499,7 +615,7 @@ function SelectorPage({ store, updateSelection }: { store: Store; updateSelectio
           onChange={updateSelection}
         />
       ))}
-      {matches.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No matched products yet.</p> : null}
+      {matches.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">No matched products yet.</p> : null}
     </div>
   );
 }
@@ -533,60 +649,75 @@ function ReviewPage({
   return (
     <div className="space-y-4">
       <ReviewUploadModal open={modalOpen} disabled={busy || includedSelections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true, removeWhiteBackground)} onUpload={() => runUpload(false, removeWhiteBackground)} />
-      <label className="flex max-w-xl items-start gap-3 rounded-md border border-ink/10 bg-white p-4 text-sm dark:border-white/10 dark:bg-[#151d18]">
-        <input
-          type="checkbox"
-          checked={removeWhiteBackground}
-          onChange={(event) => setRemoveWhiteBackground(event.target.checked)}
-          className="mt-1 h-4 w-4 rounded border-ink/20 text-moss dark:border-white/20 dark:bg-[#0f1511]"
-        />
-        <span>
-          <span className="block font-medium">Remove white background</span>
-          <span className="mt-1 block text-ink/60 dark:text-white/60">Upload transparent PNG versions to Shopify while keeping local files unchanged.</span>
-        </span>
-      </label>
-      <div className="flex flex-wrap items-center gap-2">
-        <button disabled={busy || includedSelections.length === 0} onClick={() => setModalOpen(true)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-clay px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-55">
-          <UploadCloud size={17} />
-          Review And Confirm
-        </button>
-        <button disabled={busy || allReviewProductIds.length === 0} onClick={() => onClearAll(allReviewProductIds)} className="focus-ring rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium text-ink/70 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/5 dark:text-white/75">
-          Clear all
-        </button>
-        <button disabled={busy || allReviewProductIds.length === 0 || includedProductCount === allReviewProductIds.length} onClick={() => onSelectAll(allReviewProductIds)} className="focus-ring rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium text-ink/70 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/5 dark:text-white/75">
-          Select all
-        </button>
-        <span className="text-sm text-ink/55 dark:text-white/55">{includedProductCount} of {allReviewProductIds.length} product(s) included</span>
-      </div>
+      <section className="admin-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">Review and confirm</h2>
+            <p className="text-sm admin-muted">{includedProductCount} of {allReviewProductIds.length} product(s) included</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button disabled={busy || allReviewProductIds.length === 0} onClick={() => onClearAll(allReviewProductIds)} className="admin-button">
+              Clear all
+            </button>
+            <button disabled={busy || allReviewProductIds.length === 0 || includedProductCount === allReviewProductIds.length} onClick={() => onSelectAll(allReviewProductIds)} className="admin-button">
+              Select all
+            </button>
+            <button disabled={busy || includedSelections.length === 0} onClick={() => setModalOpen(true)} className="admin-button-danger">
+              <UploadCloud size={17} />
+              Review And Confirm
+            </button>
+          </div>
+        </div>
+        <label className="mt-3 flex items-start gap-3 rounded-md border border-line bg-mist px-3 py-2 text-sm dark:border-white/10 dark:bg-white/5">
+          <input
+            type="checkbox"
+            checked={removeWhiteBackground}
+            onChange={(event) => setRemoveWhiteBackground(event.target.checked)}
+            className="mt-1 h-4 w-4 rounded border-line text-moss dark:border-white/20 dark:bg-[#0f1115]"
+          />
+          <span>
+            <span className="block font-medium">Remove white background</span>
+            <span className="mt-0.5 block admin-muted">Upload transparent PNG versions to Shopify while keeping local files unchanged.</span>
+          </span>
+        </label>
+      </section>
       <div className="grid gap-4">
         {selections.map((selection) => (
-          <div key={selection.folder.id} className="rounded-md border border-ink/10 bg-white p-4 dark:border-white/10 dark:bg-[#151d18]">
-            <p className="font-semibold">{selection.folder.tileName}</p>
-            <p className="text-sm text-ink/55 dark:text-white/55">{selection.folder.relativePath}</p>
+          <div key={selection.folder.id} className="admin-card p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold">{selection.folder.tileName}</p>
+                <p className="text-sm admin-muted">{selection.folder.relativePath}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{modeLabel(selection.mode)}</span>
+                {selection.deleteOldMedia ? <span className="admin-badge bg-clay/10 text-clay dark:bg-clay/20 dark:text-[#ffb39d]">Delete after verification</span> : <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">Keep old media</span>}
+              </div>
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {selection.products.map((product) => (
-                <label key={product.id} className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${excludedProductIdSet.has(product.id) ? "border-ink/10 text-ink/45 dark:border-white/10 dark:text-white/45" : "border-moss/30 bg-moss/5 text-ink/75 dark:border-fern/40 dark:bg-fern/10 dark:text-white/80"}`}>
+                <label key={product.id} className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${excludedProductIdSet.has(product.id) ? "border-line text-subdued dark:border-white/10 dark:text-white/45" : "border-moss/30 bg-moss/5 text-ink dark:border-[#2f8f72] dark:bg-[#0f3a2f] dark:text-[#c9f0df]"}`}>
                   <input
                     type="checkbox"
                     checked={!excludedProductIdSet.has(product.id)}
                     onChange={(event) => onToggleProduct(product.id, event.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-ink/20 text-moss dark:border-white/20 dark:bg-[#0f1511]"
+                    className="h-3.5 w-3.5 rounded border-line text-moss dark:border-white/20 dark:bg-[#0f1115]"
                   />
                   {product.title}
                 </label>
               ))}
             </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
+            <div className="mt-3 grid gap-4 lg:grid-cols-[190px_1fr]">
               <div>
-                <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Old first image</p>
-                {selection.products[0]?.firstImageUrl ? <img src={selection.products[0].firstImageUrl} alt="" className="aspect-square rounded-md object-cover" /> : <div className="aspect-square rounded-md bg-mist dark:bg-white/10" />}
+                <p className="mb-1 text-xs font-semibold uppercase admin-muted">Old first image</p>
+                {selection.products[0]?.firstImageUrl ? <img src={selection.products[0].firstImageUrl} alt="" className="aspect-square rounded-md border border-line object-cover dark:border-white/10" /> : <div className="aspect-square rounded-md border border-line bg-mist dark:border-white/10 dark:bg-white/10" />}
               </div>
               <div>
-                <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Upload order</p>
-                <div className="grid grid-cols-4 gap-2 md:grid-cols-8">
+                <p className="mb-1 text-xs font-semibold uppercase admin-muted">Local upload order</p>
+                <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12">
                   {selection.orderedImagePaths.map((imagePath) => {
                     const image = selection.folder.images.find((item) => item.absolutePath === imagePath);
-                    return image ? <img key={imagePath} src={image.previewUrl} alt={image.name} className={`aspect-square rounded-md object-cover ${imagePath === selection.selectedFirstImagePath ? "ring-4 ring-clay" : ""}`} /> : null;
+                    return image ? <img key={imagePath} src={image.previewUrl} alt={image.name} className={`aspect-square rounded-md border border-line object-cover dark:border-white/10 ${imagePath === selection.selectedFirstImagePath ? "ring-2 ring-clay" : ""}`} /> : null;
                   })}
                 </div>
               </div>
@@ -602,12 +733,24 @@ function ReviewPage({
 function HistoryPage({ history, refresh }: { history: UploadJob[]; refresh: () => void }) {
   return (
     <div className="space-y-4">
-      <button onClick={refresh} className="focus-ring inline-flex items-center gap-2 rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium dark:border-white/15 dark:bg-white/5 dark:text-white">
-        <RefreshCw size={17} />
-        Refresh
-      </button>
+      <section className="admin-card flex flex-wrap items-center justify-between gap-3 p-4">
+        <div>
+          <h2 className="text-base font-semibold">Upload history</h2>
+          <p className="text-sm admin-muted">{history.length} saved job(s)</p>
+        </div>
+        <button onClick={refresh} className="admin-button">
+          <RefreshCw size={17} />
+          Refresh
+        </button>
+      </section>
       {history.map((job) => <UploadProgress key={job.id} job={job} />)}
-      {history.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No upload jobs logged yet.</p> : null}
+      {history.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">No upload jobs logged yet.</p> : null}
     </div>
   );
+}
+
+function modeLabel(mode: UploadMode) {
+  if (mode === "replace-first") return "Replace first only";
+  if (mode === "replace-gallery") return "Replace full gallery";
+  return "Replace first + upload all";
 }

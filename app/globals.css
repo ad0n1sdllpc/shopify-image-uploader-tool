@@ -12,13 +12,13 @@ html.dark {
 
 body {
   min-height: 100vh;
-  background: #f5f7f2;
-  color: #17201b;
+  background: #f1f2f3;
+  color: #202223;
 }
 
 html.dark body {
-  background: #0f1511;
-  color: #edf3ec;
+  background: #0f1115;
+  color: #f1f2f3;
 }
 
 button:disabled {
@@ -28,5 +28,51 @@ button:disabled {
 
 .focus-ring {
   @apply focus:outline-none focus:ring-2 focus:ring-clay focus:ring-offset-2;
-  @apply dark:focus:ring-offset-[#0f1511];
+  @apply dark:focus:ring-offset-[#0f1115];
+}
+
+@layer components {
+  .admin-card {
+    @apply rounded-md border border-line bg-surface shadow-sm dark:border-white/10 dark:bg-[#171a1f];
+  }
+
+  .admin-panel {
+    @apply rounded-md border border-line bg-white/70 dark:border-white/10 dark:bg-white/5;
+  }
+
+  .admin-muted {
+    @apply text-subdued dark:text-white/55;
+  }
+
+  .admin-button {
+    @apply focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium text-ink transition hover:bg-mist disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10;
+  }
+
+  .admin-button-primary {
+    @apply focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-moss bg-moss px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#006e52] disabled:cursor-not-allowed disabled:opacity-55 dark:border-[#20a67a] dark:bg-[#008060] dark:hover:bg-[#11986f];
+  }
+
+  .admin-button-danger {
+    @apply focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-clay bg-clay px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#b4230b] disabled:cursor-not-allowed disabled:opacity-55;
+  }
+
+  .admin-input {
+    @apply focus-ring rounded-md border border-line bg-white px-3 py-2 text-sm text-ink shadow-sm dark:border-white/15 dark:bg-[#0f1115] dark:text-white;
+  }
+
+  .admin-badge {
+    @apply inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold;
+  }
+
+  .admin-table {
+    @apply w-full min-w-[860px] text-left text-sm;
+  }
+
+  .admin-table-head {
+    @apply bg-mist text-xs font-semibold uppercase text-subdued dark:bg-white/5 dark:text-white/55;
+  }
+
+  .admin-table-row {
+    @apply border-t border-line transition hover:bg-mist/60 dark:border-white/10 dark:hover:bg-white/5;
+  }
 }

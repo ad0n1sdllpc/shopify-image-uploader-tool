@@ -52,7 +52,7 @@ export default function ThemeToggle() {
   }
 
   return (
-    <div className="inline-flex rounded-md border border-ink/10 bg-mist p-1 dark:border-white/10 dark:bg-white/5" aria-label="Theme">
+    <div className="inline-flex rounded-md border border-line bg-mist p-1 dark:border-white/10 dark:bg-white/5" aria-label="Theme">
       {options.map((option) => {
         const Icon = option.icon;
         const active = option.mode === mode;
