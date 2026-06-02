@@ -25,6 +25,10 @@ export default function ImageSelector({
   const representativeProduct = useMemo(() => {
     return [...match.selectedProducts].sort((first, second) => productMediaUrls(second).length - productMediaUrls(first).length || second.totalMediaCount - first.totalMediaCount)[0] ?? null;
   }, [match.selectedProducts]);
+  const selectedProductLabels = useMemo(() => {
+    const labels = match.selectedProducts.map((product) => productGroupLabel(product, match.folder.tileName));
+    return Array.from(new Set(labels));
+  }, [match.folder.tileName, match.selectedProducts]);
   const shopifyMediaUrls = representativeProduct ? productMediaUrls(representativeProduct) : [];
   const shopifyMediaCount = representativeProduct?.totalMediaCount ?? shopifyMediaUrls.length;
 
@@ -50,6 +54,11 @@ export default function ImageSelector({
           <p className="mt-1 text-xs text-ink/60 dark:text-white/60">
             {match.selectedProducts.length} product(s) selected
           </p>
+          {selectedProductLabels.length > 0 ? (
+            <p className="mt-1 text-xs text-ink/55 dark:text-white/55">
+              Selected: {selectedProductLabels.join(" / ")}
+            </p>
+          ) : null}
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <select value={mode} onChange={(event) => { const next = event.target.value as UploadMode; setMode(next); persist(order, firstPath, next, deleteOldMedia); }} className="focus-ring rounded-md border border-ink/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#0f1511] dark:text-white">
@@ -100,6 +109,18 @@ export default function ImageSelector({
 
 function productMediaUrls(product: ShopifyProduct) {
   return product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : [];
+}
+
+function productGroupLabel(product: ShopifyProduct, tileName: string) {
+  const candidates = [product.title, product.handle, ...product.variantsSkus].filter(Boolean);
+  for (const candidate of candidates) {
+    const parts = candidate.split("-");
+    if (parts.at(-1)?.toLowerCase() === tileName.toLowerCase() && parts.length > 1) {
+      return parts.slice(0, -1).join("-").toUpperCase();
+    }
+  }
+
+  return product.title.toUpperCase();
 }
 
 function ShopifyMediaGallery({ title, mediaUrls, mediaCount }: { title: string; mediaUrls: string[]; mediaCount: number }) {
