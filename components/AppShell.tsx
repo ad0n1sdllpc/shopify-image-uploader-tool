@@ -26,6 +26,7 @@ type Store = {
   products: ShopifyProduct[];
   matches: ProductMatch[];
   selections: UploadSelection[];
+  excludedReviewProductIds: string[];
   lastJob: UploadJob | null;
 };
 
@@ -48,10 +49,11 @@ type PersistedStore = {
     mode: UploadMode;
     deleteOldMedia: boolean;
   }[];
+  excludedReviewProductIds: string[];
   lastJob: UploadJob | null;
 };
 
-const emptyStore: Store = { scan: null, products: [], matches: [], selections: [], lastJob: null };
+const emptyStore: Store = { scan: null, products: [], matches: [], selections: [], excludedReviewProductIds: [], lastJob: null };
 
 function normalizeProduct(product: ShopifyProduct): ShopifyProduct {
   return {
@@ -80,6 +82,7 @@ function compactStore(store: Store): PersistedStore {
       mode: selection.mode,
       deleteOldMedia: selection.deleteOldMedia
     })),
+    excludedReviewProductIds: store.excludedReviewProductIds,
     lastJob: store.lastJob
   };
 }
@@ -146,8 +149,40 @@ function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): 
     products,
     matches,
     selections,
+    excludedReviewProductIds: saved.excludedReviewProductIds ?? [],
     lastJob: saved.lastJob ?? null
   };
+}
+
+function activeSelections(store: Store) {
+  const selectionsByFolderId = new Map(store.selections.map((selection) => [selection.folder.id, selection]));
+
+  return store.matches.flatMap((match) => {
+    if (match.selectedProducts.length === 0) return [];
+
+    const savedSelection = selectionsByFolderId.get(match.folder.id);
+    return [savedSelection ? {
+      ...savedSelection,
+      folder: match.folder,
+      products: match.selectedProducts
+    } : {
+      folder: match.folder,
+      products: match.selectedProducts,
+      selectedFirstImagePath: match.folder.images[0]?.absolutePath ?? "",
+      orderedImagePaths: match.folder.images.map((image) => image.absolutePath),
+      mode: "append-folder" as UploadMode,
+      deleteOldMedia: false
+    }];
+  });
+}
+
+function includedSelections(store: Store) {
+  const excludedProductIds = new Set(store.excludedReviewProductIds);
+
+  return activeSelections(store).flatMap((selection) => {
+    const products = selection.products.filter((product) => !excludedProductIds.has(product.id));
+    return products.length ? [{ ...selection, products }] : [];
+  });
 }
 
 export default function AppShell({ page }: { page: PageKey }) {
@@ -183,6 +218,8 @@ export default function AppShell({ page }: { page: PageKey }) {
     () => store.matches.reduce((total, match) => total + match.selectedProducts.length, 0),
     [store.matches]
   );
+  const readySelections = useMemo(() => activeSelections(store), [store]);
+  const includedReadySelections = useMemo(() => includedSelections(store), [store]);
 
   async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, init);
@@ -274,7 +311,7 @@ export default function AppShell({ page }: { page: PageKey }) {
       const response = await request<{ job: UploadJob }>(dryRun ? "/api/uploads/dry-run" : "/api/uploads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections: store.selections, options: { removeWhiteBackground } })
+        body: JSON.stringify({ selections: includedSelections(store), options: { removeWhiteBackground } })
       });
       setStore((current) => ({ ...current, lastJob: response.job }));
       await loadHistory();
@@ -288,6 +325,22 @@ export default function AppShell({ page }: { page: PageKey }) {
   async function loadHistory() {
     const response = await request<{ jobs: UploadJob[] }>("/api/history");
     setHistory(response.jobs);
+  }
+
+  function setReviewProductIncluded(productId: string, included: boolean) {
+    setStore((current) => {
+      const excludedReviewProductIds = included
+        ? current.excludedReviewProductIds.filter((id) => id !== productId)
+        : Array.from(new Set([...current.excludedReviewProductIds, productId]));
+      return { ...current, excludedReviewProductIds };
+    });
+  }
+
+  function clearReviewProducts(productIds: string[]) {
+    setStore((current) => ({
+      ...current,
+      excludedReviewProductIds: Array.from(new Set([...current.excludedReviewProductIds, ...productIds]))
+    }));
   }
 
   useEffect(() => {
@@ -351,7 +404,7 @@ export default function AppShell({ page }: { page: PageKey }) {
           {error ? <div className="mb-4 rounded-md border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay dark:bg-clay/20 dark:text-[#ffb39d]">{error}</div> : null}
 
           {page === "dashboard" ? (
-            <Dashboard store={store} matchedSelections={matchedSelections} />
+            <Dashboard store={store} matchedSelections={matchedSelections} readySelectionCount={includedReadySelections.length} />
           ) : page === "scan" ? (
             <ScanPage busy={busy} folderPath={folderPath} setFolderPath={setFolderPath} scanFolders={scanFolders} scan={store.scan} />
           ) : page === "matching" ? (
@@ -359,7 +412,16 @@ export default function AppShell({ page }: { page: PageKey }) {
           ) : page === "selector" ? (
             <SelectorPage store={store} updateSelection={updateSelection} />
           ) : page === "review" ? (
-            <ReviewPage busy={busy} store={store} runUpload={runUpload} />
+            <ReviewPage
+              busy={busy}
+              selections={readySelections}
+              includedSelections={includedReadySelections}
+              excludedProductIds={store.excludedReviewProductIds}
+              lastJob={store.lastJob}
+              runUpload={runUpload}
+              onClearAll={clearReviewProducts}
+              onToggleProduct={setReviewProductIncluded}
+            />
           ) : (
             <HistoryPage history={history} refresh={loadHistory} />
           )}
@@ -369,12 +431,12 @@ export default function AppShell({ page }: { page: PageKey }) {
   );
 }
 
-function Dashboard({ store, matchedSelections }: { store: Store; matchedSelections: number }) {
+function Dashboard({ store, matchedSelections, readySelectionCount }: { store: Store; matchedSelections: number; readySelectionCount: number }) {
   const cards = [
     ["Scanned folders", store.scan?.folders.length ?? 0],
     ["Fetched products", store.products.length],
     ["Selected products", matchedSelections],
-    ["Ready selections", store.selections.length]
+    ["Ready selections", readySelectionCount]
   ];
 
   return (
@@ -442,20 +504,48 @@ function SelectorPage({ store, updateSelection }: { store: Store; updateSelectio
   const matches = store.matches.filter((match) => match.selectedProducts.length > 0);
   return (
     <div className="space-y-4">
-      {matches.map((match) => (
-        <ImageSelector key={match.folder.id} match={match} existingSelection={store.selections.find((selection) => selection.folder.id === match.folder.id)} onChange={updateSelection} />
+      {matches.map((match, index) => (
+        <ImageSelector
+          key={match.folder.id}
+          match={match}
+          position={index + 1}
+          total={matches.length}
+          existingSelection={store.selections.find((selection) => selection.folder.id === match.folder.id)}
+          onChange={updateSelection}
+        />
       ))}
       {matches.length === 0 ? <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No matched products yet.</p> : null}
     </div>
   );
 }
 
-function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; runUpload: (dryRun: boolean, removeWhiteBackground: boolean) => void }) {
+function ReviewPage({
+  busy,
+  selections,
+  includedSelections,
+  excludedProductIds,
+  lastJob,
+  runUpload,
+  onClearAll,
+  onToggleProduct
+}: {
+  busy: boolean;
+  selections: UploadSelection[];
+  includedSelections: UploadSelection[];
+  excludedProductIds: string[];
+  lastJob: UploadJob | null;
+  runUpload: (dryRun: boolean, removeWhiteBackground: boolean) => void;
+  onClearAll: (productIds: string[]) => void;
+  onToggleProduct: (productId: string, included: boolean) => void;
+}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [removeWhiteBackground, setRemoveWhiteBackground] = useState(false);
+  const excludedProductIdSet = new Set(excludedProductIds);
+  const allReviewProductIds = selections.flatMap((selection) => selection.products.map((product) => product.id));
+  const includedProductCount = includedSelections.reduce((total, selection) => total + selection.products.length, 0);
   return (
     <div className="space-y-4">
-      <ReviewUploadModal open={modalOpen} disabled={busy || store.selections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true, removeWhiteBackground)} onUpload={() => runUpload(false, removeWhiteBackground)} />
+      <ReviewUploadModal open={modalOpen} disabled={busy || includedSelections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true, removeWhiteBackground)} onUpload={() => runUpload(false, removeWhiteBackground)} />
       <label className="flex max-w-xl items-start gap-3 rounded-md border border-ink/10 bg-white p-4 text-sm dark:border-white/10 dark:bg-[#151d18]">
         <input
           type="checkbox"
@@ -468,15 +558,34 @@ function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; r
           <span className="mt-1 block text-ink/60 dark:text-white/60">Upload transparent PNG versions to Shopify while keeping local files unchanged.</span>
         </span>
       </label>
-      <button disabled={busy || store.selections.length === 0} onClick={() => setModalOpen(true)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-clay px-4 py-2 text-sm font-semibold text-white">
-        <UploadCloud size={17} />
-        Review And Confirm
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button disabled={busy || includedSelections.length === 0} onClick={() => setModalOpen(true)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-clay px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-55">
+          <UploadCloud size={17} />
+          Review And Confirm
+        </button>
+        <button disabled={busy || allReviewProductIds.length === 0} onClick={() => onClearAll(allReviewProductIds)} className="focus-ring rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium text-ink/70 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/5 dark:text-white/75">
+          Clear all
+        </button>
+        <span className="text-sm text-ink/55 dark:text-white/55">{includedProductCount} of {allReviewProductIds.length} product(s) included</span>
+      </div>
       <div className="grid gap-4">
-        {store.selections.map((selection) => (
+        {selections.map((selection) => (
           <div key={selection.folder.id} className="rounded-md border border-ink/10 bg-white p-4 dark:border-white/10 dark:bg-[#151d18]">
-            <p className="font-semibold">{selection.products.map((product) => product.title).join(", ")}</p>
+            <p className="font-semibold">{selection.folder.tileName}</p>
             <p className="text-sm text-ink/55 dark:text-white/55">{selection.folder.relativePath}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {selection.products.map((product) => (
+                <label key={product.id} className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${excludedProductIdSet.has(product.id) ? "border-ink/10 text-ink/45 dark:border-white/10 dark:text-white/45" : "border-moss/30 bg-moss/5 text-ink/75 dark:border-fern/40 dark:bg-fern/10 dark:text-white/80"}`}>
+                  <input
+                    type="checkbox"
+                    checked={!excludedProductIdSet.has(product.id)}
+                    onChange={(event) => onToggleProduct(product.id, event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-ink/20 text-moss dark:border-white/20 dark:bg-[#0f1511]"
+                  />
+                  {product.title}
+                </label>
+              ))}
+            </div>
             <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
               <div>
                 <p className="mb-1 text-xs font-medium text-ink/50 dark:text-white/50">Old first image</p>
@@ -495,7 +604,7 @@ function ReviewPage({ busy, store, runUpload }: { busy: boolean; store: Store; r
           </div>
         ))}
       </div>
-      {store.lastJob ? <UploadProgress job={store.lastJob} /> : null}
+      {lastJob ? <UploadProgress job={lastJob} /> : null}
     </div>
   );
 }

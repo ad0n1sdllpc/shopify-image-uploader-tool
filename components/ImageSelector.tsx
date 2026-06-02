@@ -9,10 +9,14 @@ import type { LocalImage, ProductMatch, ShopifyProduct, TileFolder, UploadMode, 
 
 export default function ImageSelector({
   match,
+  position,
+  total,
   existingSelection,
   onChange
 }: {
   match: ProductMatch;
+  position: number;
+  total: number;
   existingSelection?: UploadSelection;
   onChange: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
 }) {
@@ -49,7 +53,12 @@ export default function ImageSelector({
     <section className="rounded-md border border-ink/10 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#151d18] dark:shadow-none">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <h2 className="font-semibold">{match.folder.tileName}</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded bg-moss/10 px-2 py-0.5 text-xs font-semibold text-moss dark:bg-fern/15 dark:text-[#9fce96]">
+              {position} of {total}
+            </span>
+            <h2 className="font-semibold">{match.folder.tileName}</h2>
+          </div>
           <p className="text-sm text-ink/55 dark:text-white/55">{match.folder.relativePath}</p>
           <p className="mt-1 text-xs text-ink/60 dark:text-white/60">
             {match.selectedProducts.length} product(s) selected
