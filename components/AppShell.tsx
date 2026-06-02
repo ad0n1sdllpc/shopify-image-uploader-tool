@@ -8,6 +8,7 @@ import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
 import ThemeToggle from "@/components/ThemeToggle";
 import UploadProgress from "@/components/UploadProgress";
+import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
 import type { ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
 
 type PageKey = "dashboard" | "scan" | "matching" | "selector" | "review" | "history";
@@ -154,37 +155,6 @@ function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): 
   };
 }
 
-function activeSelections(store: Store) {
-  const selectionsByFolderId = new Map(store.selections.map((selection) => [selection.folder.id, selection]));
-
-  return store.matches.flatMap((match) => {
-    if (match.selectedProducts.length === 0) return [];
-
-    const savedSelection = selectionsByFolderId.get(match.folder.id);
-    return [savedSelection ? {
-      ...savedSelection,
-      folder: match.folder,
-      products: match.selectedProducts
-    } : {
-      folder: match.folder,
-      products: match.selectedProducts,
-      selectedFirstImagePath: match.folder.images[0]?.absolutePath ?? "",
-      orderedImagePaths: match.folder.images.map((image) => image.absolutePath),
-      mode: "append-folder" as UploadMode,
-      deleteOldMedia: false
-    }];
-  });
-}
-
-function includedSelections(store: Store) {
-  const excludedProductIds = new Set(store.excludedReviewProductIds);
-
-  return activeSelections(store).flatMap((selection) => {
-    const products = selection.products.filter((product) => !excludedProductIds.has(product.id));
-    return products.length ? [{ ...selection, products }] : [];
-  });
-}
-
 export default function AppShell({ page }: { page: PageKey }) {
   const [store, setStore] = useState<Store>(emptyStore);
   const [folderPath, setFolderPath] = useState("./TILES");
@@ -218,8 +188,8 @@ export default function AppShell({ page }: { page: PageKey }) {
     () => store.matches.reduce((total, match) => total + match.selectedProducts.length, 0),
     [store.matches]
   );
-  const readySelections = useMemo(() => activeSelections(store), [store]);
-  const includedReadySelections = useMemo(() => includedSelections(store), [store]);
+  const readySelections = useMemo(() => activeSelections(store.matches, store.selections), [store.matches, store.selections]);
+  const includedReadySelections = useMemo(() => includedSelections(readySelections, store.excludedReviewProductIds), [readySelections, store.excludedReviewProductIds]);
 
   async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, init);
@@ -233,7 +203,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     setError(null);
     try {
       const scan = await request<ScanResult>(`/api/scan?path=${encodeURIComponent(folderPath)}`);
-      setStore((current) => ({ ...current, scan, matches: [], selections: [] }));
+      setStore((current) => ({ ...current, scan, matches: [], selections: [], excludedReviewProductIds: [] }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -257,7 +227,8 @@ export default function AppShell({ page }: { page: PageKey }) {
         scan,
         products: productsResponse.products,
         matches: matchResponse.matches,
-        selections: current.scan ? current.selections : []
+        selections: current.scan ? current.selections.filter((selection) => matchResponse.matches.some((match) => match.folder.id === selection.folder.id)) : [],
+        excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matchResponse.matches))
       }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -285,7 +256,12 @@ export default function AppShell({ page }: { page: PageKey }) {
       const selections = nextSelectedProducts.length
         ? current.selections.map((selection) => selection.folder.id === folderId ? { ...selection, products: nextSelectedProducts } : selection)
         : current.selections.filter((selection) => selection.folder.id !== folderId);
-      return { ...current, matches, selections };
+      return {
+        ...current,
+        matches,
+        selections,
+        excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matches))
+      };
     });
   }
 
@@ -311,7 +287,7 @@ export default function AppShell({ page }: { page: PageKey }) {
       const response = await request<{ job: UploadJob }>(dryRun ? "/api/uploads/dry-run" : "/api/uploads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections: includedSelections(store), options: { removeWhiteBackground } })
+        body: JSON.stringify({ selections: includedSelections(activeSelections(store.matches, store.selections), store.excludedReviewProductIds), options: { removeWhiteBackground } })
       });
       setStore((current) => ({ ...current, lastJob: response.job }));
       await loadHistory();
@@ -340,6 +316,14 @@ export default function AppShell({ page }: { page: PageKey }) {
     setStore((current) => ({
       ...current,
       excludedReviewProductIds: Array.from(new Set([...current.excludedReviewProductIds, ...productIds]))
+    }));
+  }
+
+  function selectReviewProducts(productIds: string[]) {
+    const productIdSet = new Set(productIds);
+    setStore((current) => ({
+      ...current,
+      excludedReviewProductIds: current.excludedReviewProductIds.filter((id) => !productIdSet.has(id))
     }));
   }
 
@@ -420,6 +404,7 @@ export default function AppShell({ page }: { page: PageKey }) {
               lastJob={store.lastJob}
               runUpload={runUpload}
               onClearAll={clearReviewProducts}
+              onSelectAll={selectReviewProducts}
               onToggleProduct={setReviewProductIncluded}
             />
           ) : (
@@ -527,6 +512,7 @@ function ReviewPage({
   lastJob,
   runUpload,
   onClearAll,
+  onSelectAll,
   onToggleProduct
 }: {
   busy: boolean;
@@ -536,6 +522,7 @@ function ReviewPage({
   lastJob: UploadJob | null;
   runUpload: (dryRun: boolean, removeWhiteBackground: boolean) => void;
   onClearAll: (productIds: string[]) => void;
+  onSelectAll: (productIds: string[]) => void;
   onToggleProduct: (productId: string, included: boolean) => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -565,6 +552,9 @@ function ReviewPage({
         </button>
         <button disabled={busy || allReviewProductIds.length === 0} onClick={() => onClearAll(allReviewProductIds)} className="focus-ring rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium text-ink/70 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/5 dark:text-white/75">
           Clear all
+        </button>
+        <button disabled={busy || allReviewProductIds.length === 0 || includedProductCount === allReviewProductIds.length} onClick={() => onSelectAll(allReviewProductIds)} className="focus-ring rounded-md border border-ink/15 bg-white px-4 py-2 text-sm font-medium text-ink/70 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/5 dark:text-white/75">
+          Select all
         </button>
         <span className="text-sm text-ink/55 dark:text-white/55">{includedProductCount} of {allReviewProductIds.length} product(s) included</span>
       </div>
