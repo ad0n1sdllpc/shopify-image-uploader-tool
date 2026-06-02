@@ -18,6 +18,7 @@ const selection: UploadSelection = {
     variantsSkus: ["LUZ-14MEA"],
     mediaIds: ["old-media"],
     firstImageUrl: null,
+    mediaImageUrls: [],
     totalMediaCount: 1
   }],
   selectedFirstImagePath: "/first.jpg",

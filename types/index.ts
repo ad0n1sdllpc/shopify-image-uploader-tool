@@ -33,6 +33,7 @@ export type ShopifyProduct = {
   variantsSkus: string[];
   mediaIds: string[];
   firstImageUrl: string | null;
+  mediaImageUrls: string[];
   totalMediaCount: number;
 };
 

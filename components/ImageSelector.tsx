@@ -59,34 +59,66 @@ export default function ImageSelector({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[180px_1fr]">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(260px,360px)_1fr]">
         <div>
-          <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Current Shopify first</p>
-          {match.selectedProducts[0]?.firstImageUrl ? <img src={match.selectedProducts[0].firstImageUrl ?? ""} alt="" className="aspect-square rounded-md object-cover" /> : <div className="flex aspect-square items-center justify-center rounded-md bg-mist text-xs text-ink/45 dark:bg-white/10 dark:text-white/45">No image</div>}
+          <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Current Shopify media</p>
+          <div className="space-y-3">
+            {match.selectedProducts.map((product) => (
+              <ShopifyMediaStrip key={product.id} product={product} />
+            ))}
+          </div>
         </div>
 
-        <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-          <SortableContext items={order} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-              {order.map((imagePath) => {
-                const image = match.folder.images.find((item) => item.absolutePath === imagePath);
-                return image ? (
-                  <SortableImage
-                    key={image.absolutePath}
-                    image={image}
-                    selected={image.absolutePath === firstPath}
-                    onSelect={() => {
-                      setFirstPath(image.absolutePath);
-                      persist(order, image.absolutePath);
-                    }}
-                  />
-                ) : null;
-              })}
-            </div>
-          </SortableContext>
-        </DndContext>
+        <div>
+          <p className="mb-2 text-xs font-medium uppercase text-ink/50 dark:text-white/50">Local upload order</p>
+          <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+            <SortableContext items={order} strategy={rectSortingStrategy}>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6">
+                {order.map((imagePath) => {
+                  const image = match.folder.images.find((item) => item.absolutePath === imagePath);
+                  return image ? (
+                    <SortableImage
+                      key={image.absolutePath}
+                      image={image}
+                      selected={image.absolutePath === firstPath}
+                      onSelect={() => {
+                        setFirstPath(image.absolutePath);
+                        persist(order, image.absolutePath);
+                      }}
+                    />
+                  ) : null;
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </div>
       </div>
     </section>
+  );
+}
+
+function ShopifyMediaStrip({ product }: { product: ShopifyProduct }) {
+  const mediaUrls = product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : [];
+
+  return (
+    <div className="rounded-md border border-ink/10 bg-mist/60 p-2 dark:border-white/10 dark:bg-[#0f1511]">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="truncate text-xs font-semibold text-ink/70 dark:text-white/75" title={product.title}>{product.title}</p>
+        <span className="shrink-0 text-[11px] text-ink/45 dark:text-white/45">{product.totalMediaCount} media</span>
+      </div>
+      {mediaUrls.length > 0 ? (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-3">
+          {mediaUrls.map((url, index) => (
+            <div key={`${product.id}-${url}-${index}`} className="relative">
+              <img src={url} alt={`${product.title} media ${index + 1}`} className="aspect-square w-full rounded object-cover" />
+              {index === 0 ? <span className="absolute left-1 top-1 rounded bg-moss px-1.5 py-0.5 text-[10px] font-semibold text-white dark:bg-fern">First</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex aspect-[3/1] items-center justify-center rounded bg-white text-xs text-ink/45 dark:bg-white/10 dark:text-white/45">No media</div>
+      )}
+    </div>
   );
 }
 

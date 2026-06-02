@@ -19,6 +19,7 @@ function product(overrides: Partial<ShopifyProduct>): ShopifyProduct {
     variantsSkus: overrides.variantsSkus ?? [],
     mediaIds: [],
     firstImageUrl: null,
+    mediaImageUrls: [],
     totalMediaCount: 0
   };
 }

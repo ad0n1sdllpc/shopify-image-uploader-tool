@@ -141,6 +141,7 @@ export async function fetchProducts(): Promise<ShopifyProduct[]> {
         variantsSkus: product.variants.nodes.map((variant) => variant.sku).filter(Boolean) as string[],
         mediaIds: product.media.nodes.map((media) => media.id),
         firstImageUrl: product.media.nodes[0]?.image?.url ?? null,
+        mediaImageUrls: product.media.nodes.map((media) => media.image?.url).filter(Boolean) as string[],
         totalMediaCount: product.mediaCount.count
       });
     }
