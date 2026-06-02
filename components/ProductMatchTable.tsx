@@ -15,6 +15,38 @@ export default function ProductMatchTable({
     return <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">Fetch products after scanning folders to generate matches.</p>;
   }
 
+  const noMatches = matches.filter((match) => match.confidence === "No Match");
+  const matchedRows = matches.filter((match) => match.confidence !== "No Match");
+
+  return (
+    <div className="space-y-4">
+      {matchedRows.length > 0 ? <MatchTable matches={matchedRows} products={products} onManualMatch={onManualMatch} /> : null}
+      {noMatches.length > 0 ? (
+        <section className="space-y-2">
+          <div>
+            <h2 className="text-sm font-semibold">No matches</h2>
+            <p className="text-xs text-ink/55 dark:text-white/55">{noMatches.length} folder(s) need manual product selection.</p>
+          </div>
+          <MatchTable matches={noMatches} products={products} onManualMatch={onManualMatch} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function MatchTable({
+  matches,
+  products,
+  onManualMatch
+}: {
+  matches: ProductMatch[];
+  products: ShopifyProduct[];
+  onManualMatch: (folderId: string, productIds: string[]) => void;
+}) {
+  if (matches.length === 0) {
+    return <p className="rounded-md border border-ink/10 bg-white p-5 text-sm text-ink/60 dark:border-white/10 dark:bg-[#151d18] dark:text-white/60">No rows in this section.</p>;
+  }
+
   return (
     <div className="overflow-hidden rounded-md border border-ink/10 bg-white dark:border-white/10 dark:bg-[#151d18]">
       <table className="w-full min-w-[860px] text-left text-sm">
