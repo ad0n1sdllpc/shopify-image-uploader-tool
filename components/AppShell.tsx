@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FolderSearch, History, Images, LayoutDashboard, RefreshCw, Shuffle, UploadCloud } from "lucide-react";
+import type { ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, Download, FolderSearch, History, Images, LayoutDashboard, RefreshCw, Shuffle, UploadCloud, Upload } from "lucide-react";
 import ImageSelector from "@/components/ImageSelector";
 import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
@@ -52,6 +53,13 @@ type PersistedStore = {
   }[];
   excludedReviewProductIds: string[];
   lastJob: UploadJob | null;
+};
+
+type CheckpointFile = {
+  kind: "tile-uploader-checkpoint";
+  version: 1;
+  exportedAt: string;
+  state: PersistedStore;
 };
 
 const emptyStore: Store = { scan: null, products: [], matches: [], selections: [], excludedReviewProductIds: [], lastJob: null };
@@ -155,13 +163,27 @@ function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): 
   };
 }
 
+function checkpointFileName(date = new Date()) {
+  const stamp = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return `tile-uploader-checkpoint-${stamp}.json`;
+}
+
+function checkpointStateFromPayload(payload: unknown): Partial<Store> | Partial<PersistedStore> {
+  if (!payload || typeof payload !== "object") throw new Error("Checkpoint file is not valid JSON data.");
+  const maybeCheckpoint = payload as Partial<CheckpointFile>;
+  if (maybeCheckpoint.kind === "tile-uploader-checkpoint" && maybeCheckpoint.state) return maybeCheckpoint.state;
+  return payload as Partial<Store> | Partial<PersistedStore>;
+}
+
 export default function AppShell({ page }: { page: PageKey }) {
   const [store, setStore] = useState<Store>(emptyStore);
   const [folderPath, setFolderPath] = useState("./TILES");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [history, setHistory] = useState<UploadJob[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const checkpointInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tile-uploader-state");
@@ -192,6 +214,7 @@ export default function AppShell({ page }: { page: PageKey }) {
   const includedReadySelections = useMemo(() => includedSelections(readySelections, store.excludedReviewProductIds), [readySelections, store.excludedReviewProductIds]);
   const pageTitle = navItems.find((item) => item.key === page)?.label ?? "Dashboard";
   const includedProductCount = includedReadySelections.reduce((total, selection) => total + selection.products.length, 0);
+  const hasCheckpointState = Boolean(store.scan || store.products.length || store.matches.length || store.selections.length || store.lastJob);
   const workflowStats = [
     ["Folders", store.scan?.folders.length ?? 0],
     ["Products", store.products.length],
@@ -212,6 +235,53 @@ export default function AppShell({ page }: { page: PageKey }) {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Request failed.");
     return payload as T;
+  }
+
+  function saveCheckpoint() {
+    setError(null);
+    setNotice(null);
+    try {
+      const checkpoint: CheckpointFile = {
+        kind: "tile-uploader-checkpoint",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        state: compactStore(store)
+      };
+      window.localStorage.setItem("tile-uploader-state", JSON.stringify(checkpoint.state));
+      const blob = new Blob([JSON.stringify(checkpoint, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = checkpointFileName();
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setNotice("Checkpoint saved. Keep that JSON file somewhere safe so you can continue later.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  }
+
+  async function loadCheckpoint(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const payload = JSON.parse(await file.text()) as unknown;
+      const restoredStore = normalizeStoredStore(checkpointStateFromPayload(payload));
+      setStore(restoredStore);
+      setFolderPath(restoredStore.scan?.rootPath ?? folderPath);
+      setNotice(`Checkpoint loaded from ${file.name}. Review your included products before uploading.`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? `Could not load checkpoint: ${nextError.message}` : String(nextError));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function scanFolders() {
@@ -399,6 +469,15 @@ export default function AppShell({ page }: { page: PageKey }) {
                 ))}
               </div>
               <ThemeToggle />
+              <button type="button" disabled={!hasCheckpointState} onClick={saveCheckpoint} className="admin-button hidden sm:inline-flex">
+                <Download size={16} />
+                Save checkpoint
+              </button>
+              <button type="button" onClick={() => checkpointInputRef.current?.click()} className="admin-button hidden sm:inline-flex">
+                <Upload size={16} />
+                Load checkpoint
+              </button>
+              <input ref={checkpointInputRef} type="file" accept="application/json,.json" onChange={loadCheckpoint} className="hidden" />
               <Link href={primaryAction.href} className="admin-button-primary hidden sm:inline-flex">
                 {primaryAction.label}
               </Link>
@@ -416,9 +495,10 @@ export default function AppShell({ page }: { page: PageKey }) {
         <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6">
 
           {error ? <div className="mb-4 rounded-md border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay dark:bg-clay/20 dark:text-[#ffb39d]">{error}</div> : null}
+          {notice ? <div className="mb-4 rounded-md border border-moss/30 bg-moss/10 px-4 py-3 text-sm text-moss dark:border-[#2f8f72] dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">{notice}</div> : null}
 
           {page === "dashboard" ? (
-            <Dashboard store={store} matchedSelections={matchedSelections} readySelectionCount={includedReadySelections.length} />
+            <Dashboard store={store} matchedSelections={matchedSelections} readySelectionCount={includedReadySelections.length} saveCheckpoint={saveCheckpoint} loadCheckpoint={() => checkpointInputRef.current?.click()} hasCheckpointState={hasCheckpointState} />
           ) : page === "scan" ? (
             <ScanPage busy={busy} folderPath={folderPath} setFolderPath={setFolderPath} scanFolders={scanFolders} scan={store.scan} />
           ) : page === "matching" ? (
@@ -446,7 +526,21 @@ export default function AppShell({ page }: { page: PageKey }) {
   );
 }
 
-function Dashboard({ store, matchedSelections, readySelectionCount }: { store: Store; matchedSelections: number; readySelectionCount: number }) {
+function Dashboard({
+  store,
+  matchedSelections,
+  readySelectionCount,
+  saveCheckpoint,
+  loadCheckpoint,
+  hasCheckpointState
+}: {
+  store: Store;
+  matchedSelections: number;
+  readySelectionCount: number;
+  saveCheckpoint: () => void;
+  loadCheckpoint: () => void;
+  hasCheckpointState: boolean;
+}) {
   const folderCount = store.scan?.folders.length ?? 0;
   const latestJob = store.lastJob;
   const metrics: [string, number][] = [
@@ -527,6 +621,25 @@ function Dashboard({ store, matchedSelections, readySelectionCount }: { store: S
         ) : (
           <p className="mt-2 text-sm admin-muted">No upload job has been run yet.</p>
         )}
+      </section>
+
+      <section className="admin-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">Checkpoint backup</h2>
+            <p className="text-sm admin-muted">Save your review progress to a JSON file and load it back later, even after restarting the dev server.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={!hasCheckpointState} onClick={saveCheckpoint} className="admin-button">
+              <Download size={16} />
+              Save checkpoint
+            </button>
+            <button type="button" onClick={loadCheckpoint} className="admin-button">
+              <Upload size={16} />
+              Load checkpoint
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );
