@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { removeWhiteBackground } from "@/lib/backgroundTransparency";
 import { reorderProductMedia, verifyMediaOrder } from "@/lib/mediaOrder";
-import { shopifyGraphql } from "@/lib/shopify";
+import { fetchProductMediaIds, shopifyGraphql } from "@/lib/shopify";
 import type { UploadJob, UploadOptions, UploadProductStatus, UploadSelection } from "@/types";
 
 const MIME_TYPES: Record<string, string> = {
@@ -186,7 +186,7 @@ export async function runUploadJob(selections: UploadSelection[], options: Uploa
       await persist();
 
       try {
-        const oldMediaIds = [...product.mediaIds];
+        const oldMediaIds = await fetchProductMediaIds(product.id);
         const pathsToUpload =
           selection.mode === "replace-first" ? [selection.selectedFirstImagePath] : selection.orderedImagePaths;
         const uploadedMediaIds = await attachProductMedia(product.id, pathsToUpload, options);

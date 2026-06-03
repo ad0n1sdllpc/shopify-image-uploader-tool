@@ -1,4 +1,5 @@
 import type { ProductMatch, ShopifyProduct, TileFolder } from "@/types";
+import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 
 export function normalizeName(value: string) {
   return value
@@ -24,10 +25,11 @@ function hasTileCodeSegment(value: string, folderName: string) {
 }
 
 function suffixMatches(folderName: string, products: ShopifyProduct[]) {
-  return products.filter((product) => {
+  const matches = products.filter((product) => {
     const values = [product.title, product.handle, ...product.variantsSkus];
     return values.some((value) => hasTileCodeSegment(value, folderName));
   });
+  return sortProductsByVariantPrefix(matches);
 }
 
 function toMatch(folder: TileFolder, candidates: ShopifyProduct[], reason: string, partial = false): ProductMatch {

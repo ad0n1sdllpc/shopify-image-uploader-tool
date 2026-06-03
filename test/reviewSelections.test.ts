@@ -61,7 +61,7 @@ describe("review selection planning", () => {
   it("creates default selections for untouched matched folders", () => {
     const [selection] = activeSelections([match()], []);
 
-    expect(selection.products.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
+    expect(selection.products.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
     expect(selection.selectedFirstImagePath).toBe("/tiles/11AW1/1.jpg");
     expect(selection.orderedImagePaths).toEqual(["/tiles/11AW1/1.jpg", "/tiles/11AW1/2.jpg"]);
     expect(selection.mode).toBe("append-folder");
@@ -81,7 +81,7 @@ describe("review selection planning", () => {
 
     const [selection] = activeSelections([nextMatch], [savedSelection]);
 
-    expect(selection.products.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
+    expect(selection.products.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
     expect(selection.selectedFirstImagePath).toBe("/tiles/11AW1/2.jpg");
     expect(selection.orderedImagePaths).toEqual(["/tiles/11AW1/2.jpg", "/tiles/11AW1/1.jpg"]);
     expect(selection.mode).toBe("replace-gallery");

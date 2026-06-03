@@ -9,6 +9,7 @@ import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
 import ThemeToggle from "@/components/ThemeToggle";
 import UploadProgress from "@/components/UploadProgress";
+import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import { DEFAULT_REVIEW_BATCH_GROUP_SIZE, FALLBACK_SECONDS_PER_PRODUCT, batchStatusForSelection, createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob, type ReviewBatchPlan } from "@/lib/reviewBatches";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
 import type { ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
@@ -351,9 +352,9 @@ export default function AppShell({ page }: { page: PageKey }) {
       let nextSelectedProducts: ShopifyProduct[] = [];
       const matches = current.matches.map((match) => {
         if (match.folder.id !== folderId) return match;
-        const selectedProducts = productIds
+        const selectedProducts = sortProductsByVariantPrefix(productIds
           .map((productId) => current.products.find((item) => item.id === productId))
-          .filter((product): product is ShopifyProduct => Boolean(product));
+          .filter((product): product is ShopifyProduct => Boolean(product)));
         nextSelectedProducts = selectedProducts;
         return {
           ...match,
@@ -388,6 +389,17 @@ export default function AppShell({ page }: { page: PageKey }) {
       ...current,
       selections: [...current.selections.filter((selection) => selection.folder.id !== folder.id), nextSelection]
     }));
+  }
+
+  function setDeleteOldMediaForAll(deleteOldMedia: boolean) {
+    setStore((current) => ({
+      ...current,
+      selections: activeSelections(current.matches, current.selections).map((selection) => ({
+        ...selection,
+        deleteOldMedia
+      }))
+    }));
+    setNotice(deleteOldMedia ? "Delete old media after verification is now enabled for all matched tile groups." : "Delete old media after verification is now off for all matched tile groups.");
   }
 
   async function runUpload(dryRun: boolean, removeWhiteBackground: boolean, selectionsToUpload: UploadSelection[] = includedSelections(activeSelections(store.matches, store.selections), store.excludedReviewProductIds)) {
@@ -556,7 +568,7 @@ export default function AppShell({ page }: { page: PageKey }) {
           ) : page === "matching" ? (
             <MatchingPage busy={busy} store={store} fetchProductsAndMatch={fetchProductsAndMatch} updateManualMatch={updateManualMatch} />
           ) : page === "selector" ? (
-            <SelectorPage store={store} updateSelection={updateSelection} />
+            <SelectorPage store={store} updateSelection={updateSelection} onSetDeleteOldMediaForAll={setDeleteOldMediaForAll} />
           ) : page === "review" ? (
             <ReviewPage
               busy={busy}
@@ -570,6 +582,7 @@ export default function AppShell({ page }: { page: PageKey }) {
               onClearAll={clearReviewProducts}
               onSelectAll={selectReviewProducts}
               onToggleProduct={setReviewProductIncluded}
+              onSetDeleteOldMediaForAll={setDeleteOldMediaForAll}
               onMarkBatchUploaded={markReviewBatchUploaded}
               onResetBatchProgress={resetReviewBatchProgress}
             />
@@ -761,7 +774,15 @@ function MatchingPage({ busy, store, fetchProductsAndMatch, updateManualMatch }:
   );
 }
 
-function SelectorPage({ store, updateSelection }: { store: Store; updateSelection: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void }) {
+function SelectorPage({
+  store,
+  updateSelection,
+  onSetDeleteOldMediaForAll
+}: {
+  store: Store;
+  updateSelection: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
+  onSetDeleteOldMediaForAll: (deleteOldMedia: boolean) => void;
+}) {
   const matches = store.matches.filter((match) => match.selectedProducts.length > 0);
   return (
     <div className="space-y-4">
@@ -771,7 +792,12 @@ function SelectorPage({ store, updateSelection }: { store: Store; updateSelectio
             <h2 className="text-base font-semibold">Image selection queue</h2>
             <p className="text-sm admin-muted">Defaults are already active for untouched folders.</p>
           </div>
-          <span className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">{matches.length} folder(s)</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => onSetDeleteOldMediaForAll(true)} className="admin-button">
+              Select all delete old media
+            </button>
+            <span className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">{matches.length} folder(s)</span>
+          </div>
         </div>
       ) : null}
       {matches.map((match, index) => (
@@ -801,6 +827,7 @@ function ReviewPage({
   onClearAll,
   onSelectAll,
   onToggleProduct,
+  onSetDeleteOldMediaForAll,
   onMarkBatchUploaded,
   onResetBatchProgress
 }: {
@@ -815,6 +842,7 @@ function ReviewPage({
   onClearAll: (productIds: string[]) => void;
   onSelectAll: (productIds: string[]) => void;
   onToggleProduct: (productId: string, included: boolean) => void;
+  onSetDeleteOldMediaForAll: (deleteOldMedia: boolean) => void;
   onMarkBatchUploaded: (folderIds: string[]) => void;
   onResetBatchProgress: () => void;
 }) {
@@ -841,6 +869,9 @@ function ReviewPage({
             </button>
             <button disabled={busy || allReviewProductIds.length === 0 || includedProductCount === allReviewProductIds.length} onClick={() => onSelectAll(allReviewProductIds)} className="admin-button">
               Select all
+            </button>
+            <button disabled={busy || selections.length === 0} onClick={() => onSetDeleteOldMediaForAll(true)} className="admin-button">
+              Select all delete old media
             </button>
             <button disabled={busy || batchPlan.currentBatchSelections.length === 0} onClick={() => runUpload(true, removeWhiteBackground, batchPlan.currentBatchSelections)} className="admin-button">
               Dry run current batch

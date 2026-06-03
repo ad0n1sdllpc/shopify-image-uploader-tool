@@ -49,8 +49,8 @@ describe("matcher", () => {
     ]);
 
     expect(match.confidence).toBe("Variant Group");
-    expect(match.selectedProducts.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
-    expect(match.candidates.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
+    expect(match.selectedProducts.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
+    expect(match.candidates.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
   });
 
   it("does not group tile codes embedded inside a longer suffix segment", () => {
@@ -63,7 +63,7 @@ describe("matcher", () => {
     ]);
 
     expect(match.confidence).toBe("Variant Group");
-    expect(match.selectedProducts.map((item) => item.id)).toEqual(["luz", "min", "vis"]);
+    expect(match.selectedProducts.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
   });
 
   it("falls back to partial title matches", () => {

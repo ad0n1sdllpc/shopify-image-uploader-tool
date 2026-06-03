@@ -5,6 +5,7 @@ import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Star } from "lucide-react";
+import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import type { LocalImage, ProductMatch, ShopifyProduct, TileFolder, UploadMode, UploadSelection } from "@/types";
 
 export default function ImageSelector({
@@ -26,20 +27,21 @@ export default function ImageSelector({
   const [mode, setMode] = useState<UploadMode>(existingSelection?.mode ?? "append-folder");
   const [deleteOldMedia, setDeleteOldMedia] = useState(existingSelection?.deleteOldMedia ?? true);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const selectedProducts = useMemo(() => sortProductsByVariantPrefix(match.selectedProducts), [match.selectedProducts]);
   const representativeProduct = useMemo(() => {
-    return [...match.selectedProducts].sort((first, second) => productMediaUrls(second).length - productMediaUrls(first).length || second.totalMediaCount - first.totalMediaCount)[0] ?? null;
-  }, [match.selectedProducts]);
+    return [...selectedProducts].sort((first, second) => productMediaUrls(second).length - productMediaUrls(first).length || second.totalMediaCount - first.totalMediaCount)[0] ?? null;
+  }, [selectedProducts]);
   const selectedProductLabels = useMemo(() => {
-    const labels = match.selectedProducts.map((product) => productGroupLabel(product, match.folder.tileName));
+    const labels = selectedProducts.map((product) => productGroupLabel(product, match.folder.tileName));
     return Array.from(new Set(labels));
-  }, [match.folder.tileName, match.selectedProducts]);
+  }, [match.folder.tileName, selectedProducts]);
   const shopifyMediaUrls = representativeProduct ? productMediaUrls(representativeProduct) : [];
   const shopifyMediaCount = representativeProduct?.totalMediaCount ?? shopifyMediaUrls.length;
 
   function persist(nextOrder = order, nextFirst = firstPath, nextMode = mode, nextDelete = deleteOldMedia) {
     const normalizedOrder = [nextFirst, ...nextOrder.filter((imagePath) => imagePath !== nextFirst)];
     setOrder(normalizedOrder);
-    onChange(match.folder, match.selectedProducts, normalizedOrder, nextFirst, nextMode, nextDelete);
+    onChange(match.folder, selectedProducts, normalizedOrder, nextFirst, nextMode, nextDelete);
   }
 
   function onDragEnd(event: DragEndEvent) {
@@ -61,7 +63,7 @@ export default function ImageSelector({
           </div>
           <p className="text-sm admin-muted">{match.folder.relativePath}</p>
           <p className="mt-1 text-xs admin-muted">
-            {match.selectedProducts.length} product(s) selected
+            {selectedProducts.length} product(s) selected
           </p>
           {selectedProductLabels.length > 0 ? (
             <p className="mt-1 text-xs admin-muted">

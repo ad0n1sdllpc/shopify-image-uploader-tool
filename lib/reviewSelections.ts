@@ -1,9 +1,10 @@
 import type { ProductMatch, UploadMode, UploadSelection } from "@/types";
+import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 
 export function defaultSelection(match: ProductMatch): UploadSelection {
   return {
     folder: match.folder,
-    products: match.selectedProducts,
+    products: sortProductsByVariantPrefix(match.selectedProducts),
     selectedFirstImagePath: match.folder.images[0]?.absolutePath ?? "",
     orderedImagePaths: match.folder.images.map((image) => image.absolutePath),
     mode: "append-folder" as UploadMode,
@@ -21,7 +22,7 @@ export function activeSelections(matches: ProductMatch[], selections: UploadSele
     return [savedSelection ? {
       ...savedSelection,
       folder: match.folder,
-      products: match.selectedProducts
+      products: sortProductsByVariantPrefix(match.selectedProducts)
     } : defaultSelection(match)];
   });
 }
