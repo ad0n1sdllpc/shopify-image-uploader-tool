@@ -27,4 +27,36 @@ describe("Shopify product mapping", () => {
     expect(product.mediaImageUrls).toEqual(["https://cdn/1.jpg", "https://cdn/2.jpg"]);
     expect(product.firstImageUrl).toBe("https://cdn/1.jpg");
   });
+
+  it("uses product image URLs when media preview URLs are missing", () => {
+    const product = productNodeToShopifyProduct({
+      id: "product-1",
+      title: "LUZ-11AW1",
+      handle: "luz-11aw1",
+      variants: { nodes: [{ sku: "LUZ-11AW1" }] },
+      media: {
+        nodes: [
+          { id: "media-1", image: { url: "https://cdn/1.jpg" }, preview: null },
+          { id: "media-2", image: null, preview: null },
+          { id: "media-3", image: null, preview: null }
+        ],
+        pageInfo: { hasNextPage: false }
+      },
+      images: {
+        nodes: [
+          { url: "https://cdn/1.jpg" },
+          { url: "https://cdn/2.jpg" },
+          { url: "https://cdn/3.jpg" }
+        ]
+      },
+      mediaCount: { count: 3 }
+    } satisfies ProductNode);
+
+    expect(product.media.map((media) => media.url)).toEqual([
+      "https://cdn/1.jpg",
+      "https://cdn/2.jpg",
+      "https://cdn/3.jpg"
+    ]);
+    expect(product.mediaImageUrls).toEqual(["https://cdn/1.jpg", "https://cdn/2.jpg", "https://cdn/3.jpg"]);
+  });
 });

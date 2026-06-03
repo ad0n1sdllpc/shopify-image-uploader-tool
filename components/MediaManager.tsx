@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { RefreshCw, Search, Trash2 } from "lucide-react";
-import { filterMediaProducts, mediaDeleteItems, nonFirstMediaIds, productMediaItems, selectedMediaSummary } from "@/lib/mediaManager";
+import { filterMediaGroups, groupedMediaSelected, groupMediaProducts, mediaDeleteItems, nonFirstGroupedMediaIds, productMediaItems, selectedMediaSummary, toggleGroupedMediaSelection } from "@/lib/mediaManager";
 import type { MediaDeleteRequestItem, MediaDeleteResult, ShopifyProduct } from "@/types";
 
 export default function MediaManager({
@@ -33,22 +33,22 @@ export default function MediaManager({
   const [results, setResults] = useState<MediaDeleteResult[] | null>(null);
 
   const filters = { query, multiMediaOnly, selectedOnly };
-  const visibleProducts = useMemo(() => filterMediaProducts(products, filters, selectedMediaIds), [products, query, multiMediaOnly, selectedOnly, selectedMediaIds]);
+  const groups = useMemo(() => groupMediaProducts(products), [products]);
+  const visibleGroups = useMemo(() => filterMediaGroups(groups, filters, selectedMediaIds), [groups, query, multiMediaOnly, selectedOnly, selectedMediaIds]);
   const summary = useMemo(() => selectedMediaSummary(products, selectedMediaIds), [products, selectedMediaIds]);
   const selectedSet = new Set(selectedMediaIds);
   const selectedItems = mediaDeleteItems(products, selectedMediaIds);
   const selectedProducts = products.filter((product) => productMediaItems(product).some((media, index) => index > 0 && selectedSet.has(media.id)));
 
-  function toggleMedia(mediaId: string, selected: boolean) {
-    setSelectedMediaIds((current) => {
-      if (selected) return Array.from(new Set([...current, mediaId]));
-      return current.filter((id) => id !== mediaId);
-    });
+  function toggleGroupedMedia(groupId: string, mediaIndex: number, selected: boolean) {
+    const group = groups.find((item) => item.id === groupId);
+    if (!group) return;
+    setSelectedMediaIds((current) => toggleGroupedMediaSelection(group, mediaIndex, selected, current));
     setResults(null);
   }
 
   function selectVisible() {
-    setSelectedMediaIds((current) => Array.from(new Set([...current, ...nonFirstMediaIds(visibleProducts)])));
+    setSelectedMediaIds((current) => Array.from(new Set([...current, ...nonFirstGroupedMediaIds(visibleGroups)])));
     setResults(null);
   }
 
@@ -98,7 +98,7 @@ export default function MediaManager({
               <RefreshCw size={17} />
               Refresh products
             </button>
-            <button type="button" disabled={busy || visibleProducts.length === 0} onClick={selectVisible} className="admin-button">
+            <button type="button" disabled={busy || visibleGroups.length === 0} onClick={selectVisible} className="admin-button">
               Select all non-first visible media
             </button>
             <button type="button" disabled={busy || selectedMediaIds.length === 0} onClick={() => { setSelectedMediaIds([]); setResults(null); }} className="admin-button">
@@ -134,21 +134,23 @@ export default function MediaManager({
       {results ? <DeleteResults results={results} products={products} /> : null}
 
       <div className="grid gap-3">
-        {visibleProducts.map((product) => {
-          const media = productMediaItems(product);
+        {visibleGroups.map((group) => {
+          const media = group.media;
           return (
-            <section key={product.id} className="admin-card p-4">
+            <section key={group.id} className="admin-card p-4">
               <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate font-semibold">{product.title}</p>
-                  <p className="truncate text-xs admin-muted">{product.handle} {product.variantsSkus.length ? `- ${product.variantsSkus.join(", ")}` : ""}</p>
+                  <p className="truncate font-semibold">{group.code}</p>
+                  <p className="truncate text-xs admin-muted">
+                    {group.products.length} product(s): {group.variantLabels.join(" / ")}
+                  </p>
                 </div>
-                <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{media.length} media</span>
+                <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{media.length} media per product</span>
               </div>
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-12">
                 {media.map((item, index) => {
                   const isFirst = index === 0;
-                  const selected = selectedSet.has(item.id);
+                  const selected = groupedMediaSelected(group, index, selectedMediaIds);
                   return (
                     <label key={item.id} className={`relative overflow-hidden rounded-md border ${selected ? "border-clay ring-2 ring-clay/40" : "border-line dark:border-white/10"} ${isFirst ? "cursor-not-allowed opacity-80" : "cursor-pointer"}`}>
                       {item.url ? <img src={item.url} alt="" className="aspect-square w-full object-cover" /> : <div className="aspect-square bg-mist dark:bg-white/10" />}
@@ -159,7 +161,7 @@ export default function MediaManager({
                         <input
                           type="checkbox"
                           checked={selected}
-                          onChange={(event) => toggleMedia(item.id, event.target.checked)}
+                          onChange={(event) => toggleGroupedMedia(group.id, index, event.target.checked)}
                           className="absolute right-1 top-1 h-4 w-4 rounded border-white text-clay"
                         />
                       ) : null}
@@ -172,7 +174,7 @@ export default function MediaManager({
         })}
       </div>
 
-      {visibleProducts.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">No products match the current media filters.</p> : null}
+      {visibleGroups.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">No product groups match the current media filters.</p> : null}
 
       {confirmOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">

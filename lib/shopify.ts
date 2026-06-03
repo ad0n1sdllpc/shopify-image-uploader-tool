@@ -149,13 +149,13 @@ export async function fetchProducts(): Promise<ShopifyProduct[]> {
 }
 
 export function productNodeToShopifyProduct(product: ProductNode): ShopifyProduct {
+  const fallbackImageUrls = product.images.nodes.map((image) => image.url);
   const media = product.media.nodes.map<ShopifyProductMedia>((node, index) => ({
     id: node.id,
-    url: mediaImageUrl(node),
+    url: mediaImageUrl(node) ?? fallbackImageUrls[index] ?? null,
     position: index
   }));
   const imageUrls = media.map((item) => item.url).filter((url): url is string => Boolean(url));
-  const fallbackImageUrls = product.images.nodes.map((image) => image.url).filter((url): url is string => Boolean(url));
   const mediaImageUrls = imageUrls.length ? imageUrls : uniqueUrls(fallbackImageUrls);
 
   return {

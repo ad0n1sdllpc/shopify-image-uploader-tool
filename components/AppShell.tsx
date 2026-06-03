@@ -84,7 +84,10 @@ const emptyStore: Store = {
 
 function normalizeProduct(product: ShopifyProduct): ShopifyProduct {
   const media = product.media?.length
-    ? product.media
+    ? product.media.map((item, index) => ({
+      ...item,
+      url: item.url ?? product.mediaImageUrls?.[index] ?? (index === 0 ? product.firstImageUrl : null)
+    }))
     : product.mediaIds?.map((id, index) => ({
       id,
       url: product.mediaImageUrls?.[index] ?? (index === 0 ? product.firstImageUrl : null),

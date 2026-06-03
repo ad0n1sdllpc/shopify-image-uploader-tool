@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterMediaProducts, matchedMediaProducts, mediaDeleteItems, nonFirstMediaIds, selectedMediaSummary } from "@/lib/mediaManager";
+import { filterMediaProducts, filterMediaGroups, groupedMediaSelected, groupMediaProducts, matchedMediaProducts, mediaDeleteItems, nonFirstGroupedMediaIds, nonFirstMediaIds, selectedMediaSummary, toggleGroupedMediaSelection } from "@/lib/mediaManager";
 import type { ProductMatch, ShopifyProduct } from "@/types";
 
 function product(overrides: Partial<ShopifyProduct> = {}): ShopifyProduct {
@@ -68,5 +68,44 @@ describe("media manager selection", () => {
     }];
 
     expect(matchedMediaProducts(matches).map((item) => item.id)).toEqual(["selected"]);
+  });
+
+  it("groups LUZ, VIS, and MIN product variants under the shared product code", () => {
+    const products = [
+      product({ id: "luz", title: "LUZ-61271", handle: "luz-61271" }),
+      product({ id: "min", title: "MIN-61271", handle: "min-61271" }),
+      product({ id: "vis", title: "VIS-61271", handle: "vis-61271" })
+    ];
+
+    const [group] = groupMediaProducts(products);
+
+    expect(group.code).toBe("61271");
+    expect(group.variantLabels).toEqual(["LUZ", "VIS", "MIN"]);
+    expect(group.products.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
+  });
+
+  it("selects the same media position across every product in a group", () => {
+    const products = [
+      product({ id: "luz", media: [{ id: "luz-first", url: null, position: 0 }, { id: "luz-second", url: null, position: 1 }] }),
+      product({ id: "vis", title: "VIS-11AW1", media: [{ id: "vis-first", url: null, position: 0 }, { id: "vis-second", url: null, position: 1 }] })
+    ];
+    const [group] = groupMediaProducts(products);
+    const selectedIds = toggleGroupedMediaSelection(group, 1, true, []);
+
+    expect(selectedIds).toEqual(["luz-second", "vis-second"]);
+    expect(groupedMediaSelected(group, 1, selectedIds)).toBe(true);
+    expect(mediaDeleteItems(products, selectedIds)).toEqual([
+      { productId: "luz", mediaIds: ["luz-second"] },
+      { productId: "vis", mediaIds: ["vis-second"] }
+    ]);
+  });
+
+  it("selects non-first media across visible groups", () => {
+    const groups = groupMediaProducts([
+      product({ id: "luz", media: [{ id: "luz-first", url: null, position: 0 }, { id: "luz-second", url: null, position: 1 }] }),
+      product({ id: "vis", title: "VIS-11AW1", media: [{ id: "vis-first", url: null, position: 0 }, { id: "vis-second", url: null, position: 1 }] })
+    ]);
+
+    expect(nonFirstGroupedMediaIds(filterMediaGroups(groups, { query: "11AW1", multiMediaOnly: true, selectedOnly: false }, []))).toEqual(["luz-second", "vis-second"]);
   });
 });
