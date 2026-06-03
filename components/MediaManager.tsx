@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { RefreshCw, Search, Trash2 } from "lucide-react";
 import { filterMediaProducts, mediaDeleteItems, nonFirstMediaIds, productMediaItems, selectedMediaSummary } from "@/lib/mediaManager";
@@ -9,12 +10,20 @@ export default function MediaManager({
   products,
   busy,
   fetchProducts,
-  deleteMedia
+  deleteMedia,
+  emptyTitle = "Product media",
+  emptyDescription = "Fetch Shopify products to inspect and clean duplicate media.",
+  emptyActionHref,
+  emptyActionLabel = "Fetch Shopify products"
 }: {
   products: ShopifyProduct[];
   busy: boolean;
   fetchProducts: () => Promise<void>;
   deleteMedia: (items: MediaDeleteRequestItem[]) => Promise<MediaDeleteResult[]>;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  emptyActionHref?: string;
+  emptyActionLabel?: string;
 }) {
   const [query, setQuery] = useState("");
   const [multiMediaOnly, setMultiMediaOnly] = useState(true);
@@ -60,13 +69,17 @@ export default function MediaManager({
       <section className="admin-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold">Product media</h2>
-            <p className="text-sm admin-muted">Fetch Shopify products to inspect and clean duplicate media.</p>
+            <h2 className="text-base font-semibold">{emptyTitle}</h2>
+            <p className="text-sm admin-muted">{emptyDescription}</p>
           </div>
-          <button type="button" disabled={busy} onClick={fetchProducts} className="admin-button-primary">
-            <RefreshCw size={17} />
-            Fetch Shopify products
-          </button>
+          {emptyActionHref ? (
+            <Link href={emptyActionHref} className="admin-button-primary">{emptyActionLabel}</Link>
+          ) : (
+            <button type="button" disabled={busy} onClick={fetchProducts} className="admin-button-primary">
+              <RefreshCw size={17} />
+              {emptyActionLabel}
+            </button>
+          )}
         </div>
       </section>
     );

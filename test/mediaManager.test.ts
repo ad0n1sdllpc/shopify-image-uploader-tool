@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { filterMediaProducts, mediaDeleteItems, nonFirstMediaIds, selectedMediaSummary } from "@/lib/mediaManager";
-import type { ShopifyProduct } from "@/types";
+import { filterMediaProducts, matchedMediaProducts, mediaDeleteItems, nonFirstMediaIds, selectedMediaSummary } from "@/lib/mediaManager";
+import type { ProductMatch, ShopifyProduct } from "@/types";
 
 function product(overrides: Partial<ShopifyProduct> = {}): ShopifyProduct {
   return {
@@ -45,5 +45,28 @@ describe("media manager selection", () => {
     ];
 
     expect(filterMediaProducts(products, { query: "11aw1", multiMediaOnly: true, selectedOnly: false }, []).map((item) => item.id)).toEqual(["one"]);
+  });
+
+  it("scopes media products to unique selected products from local matches", () => {
+    const selected = product({ id: "selected" });
+    const duplicateSelected = product({ id: "selected", title: "Duplicate reference" });
+    const unselectedCandidate = product({ id: "candidate" });
+    const matches: ProductMatch[] = [{
+      folder: {
+        id: "folder-1",
+        size: "10x10",
+        tileName: "11AW1",
+        absolutePath: "/tiles/11AW1",
+        relativePath: "10x10/11AW1",
+        images: []
+      },
+      confidence: "Variant Group",
+      product: selected,
+      candidates: [selected, unselectedCandidate],
+      selectedProducts: [selected, duplicateSelected],
+      reason: "Grouped by tile code."
+    }];
+
+    expect(matchedMediaProducts(matches).map((item) => item.id)).toEqual(["selected"]);
   });
 });

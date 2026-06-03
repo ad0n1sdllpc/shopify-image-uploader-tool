@@ -10,6 +10,7 @@ import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
 import ThemeToggle from "@/components/ThemeToggle";
 import UploadProgress from "@/components/UploadProgress";
+import { matchedMediaProducts } from "@/lib/mediaManager";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import { DEFAULT_REVIEW_BATCH_GROUP_SIZE, FALLBACK_SECONDS_PER_PRODUCT, batchStatusForSelection, createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob, type ReviewBatchPlan } from "@/lib/reviewBatches";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
@@ -275,6 +276,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     () => createReviewBatchPlan(includedReadySelections, store.completedReviewFolderIds, DEFAULT_REVIEW_BATCH_GROUP_SIZE),
     [includedReadySelections, store.completedReviewFolderIds]
   );
+  const mediaManagerProducts = useMemo(() => matchedMediaProducts(store.matches), [store.matches]);
   const pageTitle = navItems.find((item) => item.key === page)?.label ?? "Dashboard";
   const includedProductCount = includedReadySelections.reduce((total, selection) => total + selection.products.length, 0);
   const hasCheckpointState = Boolean(store.scan || store.products.length || store.matches.length || store.selections.length || store.completedReviewFolderIds.length || store.lastJob);
@@ -647,7 +649,16 @@ export default function AppShell({ page }: { page: PageKey }) {
           ) : page === "matching" ? (
             <MatchingPage busy={busy} store={store} fetchProductsAndMatch={fetchProductsAndMatch} updateManualMatch={updateManualMatch} />
           ) : page === "media" ? (
-            <MediaManager products={store.products} busy={busy} fetchProducts={fetchProductsOnly} deleteMedia={deleteSelectedMedia} />
+            <MediaManager
+              products={mediaManagerProducts}
+              busy={busy}
+              fetchProducts={fetchProductsOnly}
+              deleteMedia={deleteSelectedMedia}
+              emptyTitle="Matched product media"
+              emptyDescription={store.matches.length > 0 ? "No Shopify products are selected in the current local matches." : "Run Product Matching first so Media Manager only shows products tied to your local tile folders."}
+              emptyActionHref="/matching"
+              emptyActionLabel="Open Product Matching"
+            />
           ) : page === "selector" ? (
             <SelectorPage store={store} updateSelection={updateSelection} onSetDeleteOldMediaForAll={setDeleteOldMediaForAll} />
           ) : page === "review" ? (

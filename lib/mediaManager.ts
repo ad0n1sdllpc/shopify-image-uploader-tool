@@ -1,4 +1,4 @@
-import type { ShopifyProduct, ShopifyProductMedia } from "@/types";
+import type { ProductMatch, ShopifyProduct, ShopifyProductMedia } from "@/types";
 
 export type MediaManagerFilters = {
   query: string;
@@ -18,6 +18,21 @@ export function productMediaItems(product: ShopifyProduct): ShopifyProductMedia[
 
 export function nonFirstMediaIds(products: ShopifyProduct[]) {
   return products.flatMap((product) => productMediaItems(product).slice(1).map((media) => media.id));
+}
+
+export function matchedMediaProducts(matches: ProductMatch[]) {
+  const seenProductIds = new Set<string>();
+  const products: ShopifyProduct[] = [];
+
+  for (const match of matches) {
+    for (const product of match.selectedProducts) {
+      if (seenProductIds.has(product.id)) continue;
+      seenProductIds.add(product.id);
+      products.push(product);
+    }
+  }
+
+  return products;
 }
 
 export function selectedMediaSummary(products: ShopifyProduct[], selectedMediaIds: string[]) {
