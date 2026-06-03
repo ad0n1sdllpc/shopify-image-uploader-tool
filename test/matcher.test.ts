@@ -17,6 +17,7 @@ function product(overrides: Partial<ShopifyProduct>): ShopifyProduct {
     title: overrides.title ?? "Luz 14MEA",
     handle: overrides.handle ?? "luz-14mea",
     variantsSkus: overrides.variantsSkus ?? [],
+    media: [],
     mediaIds: [],
     firstImageUrl: null,
     mediaImageUrls: [],

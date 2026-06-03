@@ -16,6 +16,7 @@ const selection: UploadSelection = {
     title: "Luz Tile",
     handle: "luz-tile",
     variantsSkus: ["LUZ-14MEA"],
+    media: [{ id: "old-media", url: null, position: 0 }],
     mediaIds: ["old-media"],
     firstImageUrl: null,
     mediaImageUrls: [],

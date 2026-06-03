@@ -1,5 +1,5 @@
 import "server-only";
-import type { ShopifyProduct } from "@/types";
+import type { ShopifyProduct, ShopifyProductMedia } from "@/types";
 
 const DEFAULT_API_VERSION = "2026-01";
 
@@ -88,7 +88,7 @@ export async function shopifyGraphql<T>(query: string, variables?: Record<string
   return payload.data;
 }
 
-type ProductNode = {
+export type ProductNode = {
   id: string;
   title: string;
   handle: string;
@@ -139,26 +139,36 @@ export async function fetchProducts(): Promise<ShopifyProduct[]> {
     const data: ProductsResponse = await shopifyGraphql<ProductsResponse>(PRODUCTS_QUERY, { cursor });
 
     for (const product of data.products.nodes) {
-      const mediaImageUrls = uniqueUrls([
-        ...product.media.nodes.map(mediaImageUrl),
-        ...product.images.nodes.map((image) => image.url)
-      ]);
-      products.push({
-        id: product.id,
-        title: product.title,
-        handle: product.handle,
-        variantsSkus: product.variants.nodes.map((variant) => variant.sku).filter(Boolean) as string[],
-        mediaIds: product.media.nodes.map((media) => media.id),
-        firstImageUrl: mediaImageUrls[0] ?? null,
-        mediaImageUrls,
-        totalMediaCount: product.mediaCount.count
-      });
+      products.push(productNodeToShopifyProduct(product));
     }
 
     cursor = data.products.pageInfo.hasNextPage ? data.products.pageInfo.endCursor : null;
   } while (cursor);
 
   return products;
+}
+
+export function productNodeToShopifyProduct(product: ProductNode): ShopifyProduct {
+  const media = product.media.nodes.map<ShopifyProductMedia>((node, index) => ({
+    id: node.id,
+    url: mediaImageUrl(node),
+    position: index
+  }));
+  const imageUrls = media.map((item) => item.url).filter((url): url is string => Boolean(url));
+  const fallbackImageUrls = product.images.nodes.map((image) => image.url).filter((url): url is string => Boolean(url));
+  const mediaImageUrls = imageUrls.length ? imageUrls : uniqueUrls(fallbackImageUrls);
+
+  return {
+    id: product.id,
+    title: product.title,
+    handle: product.handle,
+    variantsSkus: product.variants.nodes.map((variant) => variant.sku).filter(Boolean) as string[],
+    media,
+    mediaIds: media.map((item) => item.id),
+    firstImageUrl: mediaImageUrls[0] ?? null,
+    mediaImageUrls,
+    totalMediaCount: product.mediaCount.count
+  };
 }
 
 function mediaImageUrl(media: ProductNode["media"]["nodes"][number]) {
@@ -169,15 +179,51 @@ function uniqueUrls(urls: (string | null | undefined)[]) {
   return Array.from(new Set(urls.filter((url): url is string => Boolean(url))));
 }
 
-export async function fetchProductMediaIds(productId: string) {
+export async function fetchProductMedia(productId: string) {
   const data = await shopifyGraphql<{
-    product: { media: { nodes: { id: string }[] } } | null;
+    product: { media: { nodes: { id: string; image?: { url: string | null } | null; preview?: { image?: { url: string | null } | null } | null }[] } } | null;
   }>(
     `query ProductMedia($id: ID!) {
-      product(id: $id) { media(first: 250, sortKey: POSITION) { nodes { id } } }
+      product(id: $id) {
+        media(first: 250, sortKey: POSITION) {
+          nodes {
+            id
+            preview { image { url } }
+            ... on MediaImage { image { url } }
+          }
+        }
+      }
     }`,
     { id: productId }
   );
 
-  return data.product?.media.nodes.map((media) => media.id) ?? [];
+  return data.product?.media.nodes.map<ShopifyProductMedia>((media, index) => ({
+    id: media.id,
+    url: mediaImageUrl(media),
+    position: index
+  })) ?? [];
+}
+
+export async function fetchProductMediaIds(productId: string) {
+  return (await fetchProductMedia(productId)).map((media) => media.id);
+}
+
+export async function deleteProductMedia(productId: string, mediaIds: string[]) {
+  if (mediaIds.length === 0) return [];
+
+  const data = await shopifyGraphql<{
+    productDeleteMedia: { deletedMediaIds: string[]; mediaUserErrors: { message: string }[] };
+  }>(
+    `mutation ProductDeleteMedia($productId: ID!, $mediaIds: [ID!]!) {
+      productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
+        deletedMediaIds
+        mediaUserErrors { message }
+      }
+    }`,
+    { productId, mediaIds }
+  );
+
+  const errors = data.productDeleteMedia.mediaUserErrors;
+  if (errors.length) throw new Error(errors.map((error) => error.message).join("; "));
+  return data.productDeleteMedia.deletedMediaIds;
 }

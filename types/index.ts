@@ -26,15 +26,36 @@ export type ScanResult = {
   folders: TileFolder[];
 };
 
+export type ShopifyProductMedia = {
+  id: string;
+  url: string | null;
+  position: number;
+};
+
 export type ShopifyProduct = {
   id: string;
   title: string;
   handle: string;
   variantsSkus: string[];
+  media: ShopifyProductMedia[];
   mediaIds: string[];
   firstImageUrl: string | null;
   mediaImageUrls: string[];
   totalMediaCount: number;
+};
+
+export type MediaDeleteRequestItem = {
+  productId: string;
+  mediaIds: string[];
+};
+
+export type MediaDeleteResult = {
+  productId: string;
+  requestedMediaIds: string[];
+  deletedMediaIds: string[];
+  skippedMediaIds: string[];
+  status: "success" | "failed";
+  error?: string;
 };
 
 export type MatchConfidence = "Exact" | "Partial" | "Variant Group" | "Multiple Matches" | "No Match";

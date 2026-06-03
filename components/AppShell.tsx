@@ -3,8 +3,9 @@
 import Link from "next/link";
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Download, FolderSearch, History, Images, LayoutDashboard, RefreshCw, Shuffle, UploadCloud, Upload } from "lucide-react";
+import { CheckCircle2, Download, FolderSearch, History, Images, LayoutDashboard, RefreshCw, Shuffle, Trash2, UploadCloud, Upload } from "lucide-react";
 import ImageSelector from "@/components/ImageSelector";
+import MediaManager from "@/components/MediaManager";
 import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -12,14 +13,15 @@ import UploadProgress from "@/components/UploadProgress";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import { DEFAULT_REVIEW_BATCH_GROUP_SIZE, FALLBACK_SECONDS_PER_PRODUCT, batchStatusForSelection, createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob, type ReviewBatchPlan } from "@/lib/reviewBatches";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
-import type { ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
+import type { MediaDeleteRequestItem, MediaDeleteResult, ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
 
-type PageKey = "dashboard" | "scan" | "matching" | "selector" | "review" | "history";
+type PageKey = "dashboard" | "scan" | "matching" | "media" | "selector" | "review" | "history";
 
 const navItems: { key: PageKey; href: string; label: string; icon: React.ElementType }[] = [
   { key: "dashboard", href: "/", label: "Dashboard", icon: LayoutDashboard },
   { key: "scan", href: "/scan", label: "Folder Scan", icon: FolderSearch },
   { key: "matching", href: "/matching", label: "Product Matching", icon: Shuffle },
+  { key: "media", href: "/media", label: "Media Manager", icon: Trash2 },
   { key: "selector", href: "/selector", label: "Image Selector", icon: Images },
   { key: "review", href: "/review", label: "Review Upload", icon: UploadCloud },
   { key: "history", href: "/history", label: "History", icon: History }
@@ -80,9 +82,21 @@ const emptyStore: Store = {
 };
 
 function normalizeProduct(product: ShopifyProduct): ShopifyProduct {
+  const media = product.media?.length
+    ? product.media
+    : product.mediaIds?.map((id, index) => ({
+      id,
+      url: product.mediaImageUrls?.[index] ?? (index === 0 ? product.firstImageUrl : null),
+      position: index
+    })) ?? [];
+  const mediaImageUrls = media.map((item) => item.url).filter((url): url is string => Boolean(url));
+
   return {
     ...product,
-    mediaImageUrls: product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : []
+    media,
+    mediaIds: media.length ? media.map((item) => item.id) : product.mediaIds ?? [],
+    firstImageUrl: mediaImageUrls[0] ?? product.firstImageUrl ?? null,
+    mediaImageUrls: mediaImageUrls.length ? mediaImageUrls : product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : []
   };
 }
 
@@ -194,6 +208,32 @@ function checkpointStateFromPayload(payload: unknown): Partial<Store> | Partial<
   return payload as Partial<Store> | Partial<PersistedStore>;
 }
 
+function storeWithRefreshedProducts(current: Store, products: ShopifyProduct[]): Store {
+  const normalizedProducts = products.map((product) => normalizeProduct(product));
+  const productsById = new Map(normalizedProducts.map((product) => [product.id, product]));
+  const refreshProduct = (product: ShopifyProduct) => productsById.get(product.id) ?? normalizeProduct(product);
+  const matches = current.matches.map((match) => {
+    const selectedProducts = sortProductsByVariantPrefix(match.selectedProducts.map(refreshProduct));
+    return {
+      ...match,
+      product: match.product ? refreshProduct(match.product) : selectedProducts[0] ?? null,
+      candidates: match.candidates.map(refreshProduct),
+      selectedProducts
+    };
+  });
+  const selections = current.selections.map((selection) => ({
+    ...selection,
+    products: selection.products.map(refreshProduct)
+  }));
+
+  return {
+    ...current,
+    products: normalizedProducts,
+    matches,
+    selections
+  };
+}
+
 export default function AppShell({ page }: { page: PageKey }) {
   const [store, setStore] = useState<Store>(emptyStore);
   const [folderPath, setFolderPath] = useState("./TILES");
@@ -248,6 +288,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     dashboard: { href: "/scan", label: "Start scan" },
     scan: { href: "/matching", label: "Match products" },
     matching: { href: "/selector", label: "Select images" },
+    media: { href: "/selector", label: "Select images" },
     selector: { href: "/review", label: "Review upload" },
     review: { href: "/history", label: "View history" },
     history: { href: "/review", label: "Back to review" }
@@ -334,7 +375,7 @@ export default function AppShell({ page }: { page: PageKey }) {
       setStore((current) => ({
         ...current,
         scan,
-        products: productsResponse.products,
+        products: productsResponse.products.map((product) => normalizeProduct(product)),
         matches: matchResponse.matches,
         selections: current.scan ? current.selections.filter((selection) => matchResponse.matches.some((match) => match.folder.id === selection.folder.id)) : [],
         excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matchResponse.matches)),
@@ -342,6 +383,44 @@ export default function AppShell({ page }: { page: PageKey }) {
       }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function fetchProductsOnly() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const productsResponse = await request<{ products: ShopifyProduct[] }>("/api/products");
+      setStore((current) => storeWithRefreshedProducts(current, productsResponse.products));
+      setNotice(`${productsResponse.products.length} Shopify product(s) refreshed.`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelectedMedia(items: MediaDeleteRequestItem[]) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await request<{ results: MediaDeleteResult[] }>("/api/media/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items })
+      });
+      const deletedCount = response.results.reduce((total, result) => total + result.deletedMediaIds.length, 0);
+      const productsResponse = await request<{ products: ShopifyProduct[] }>("/api/products");
+      setStore((current) => storeWithRefreshedProducts(current, productsResponse.products));
+      setNotice(`${deletedCount} media item(s) deleted. Shopify product media was refreshed.`);
+      return response.results;
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      throw nextError;
     } finally {
       setBusy(false);
     }
@@ -567,6 +646,8 @@ export default function AppShell({ page }: { page: PageKey }) {
             <ScanPage busy={busy} folderPath={folderPath} setFolderPath={setFolderPath} scanFolders={scanFolders} scan={store.scan} />
           ) : page === "matching" ? (
             <MatchingPage busy={busy} store={store} fetchProductsAndMatch={fetchProductsAndMatch} updateManualMatch={updateManualMatch} />
+          ) : page === "media" ? (
+            <MediaManager products={store.products} busy={busy} fetchProducts={fetchProductsOnly} deleteMedia={deleteSelectedMedia} />
           ) : page === "selector" ? (
             <SelectorPage store={store} updateSelection={updateSelection} onSetDeleteOldMediaForAll={setDeleteOldMediaForAll} />
           ) : page === "review" ? (

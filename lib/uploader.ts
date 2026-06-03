@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { removeWhiteBackground } from "@/lib/backgroundTransparency";
 import { reorderProductMedia, verifyMediaOrder } from "@/lib/mediaOrder";
-import { fetchProductMediaIds, shopifyGraphql } from "@/lib/shopify";
+import { deleteProductMedia, fetchProductMediaIds, shopifyGraphql } from "@/lib/shopify";
 import type { UploadJob, UploadOptions, UploadProductStatus, UploadSelection } from "@/types";
 
 const MIME_TYPES: Record<string, string> = {
@@ -135,25 +135,6 @@ async function attachProductMedia(productId: string, imagePaths: string[], optio
   return data.productCreateMedia.media.map((media) => media.id);
 }
 
-async function deleteMedia(productId: string, mediaIds: string[]) {
-  if (mediaIds.length === 0) return;
-
-  const data = await shopifyGraphql<{
-    productDeleteMedia: { deletedMediaIds: string[]; mediaUserErrors: { message: string }[] };
-  }>(
-    `mutation ProductDeleteMedia($productId: ID!, $mediaIds: [ID!]!) {
-      productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
-        deletedMediaIds
-        mediaUserErrors { message }
-      }
-    }`,
-    { productId, mediaIds }
-  );
-
-  const errors = data.productDeleteMedia.mediaUserErrors;
-  if (errors.length) throw new Error(errors.map((error) => error.message).join("; "));
-}
-
 export async function runUploadJob(selections: UploadSelection[], options: UploadOptions = defaultUploadOptions, onUpdate?: (job: UploadJob) => void | Promise<void>) {
   const job: UploadJob = {
     id: jobId(),
@@ -205,7 +186,7 @@ export async function runUploadJob(selections: UploadSelection[], options: Uploa
           productStatus.progress = 88;
           await persist();
           const deleteIds = selection.mode === "replace-gallery" ? oldMediaIds : oldMediaIds.slice(0, 1);
-          await deleteMedia(product.id, deleteIds);
+          await deleteProductMedia(product.id, deleteIds);
         }
 
         productStatus.status = "success";

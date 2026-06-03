@@ -1,8 +1,6 @@
 import "server-only";
 import { fetchProductMediaIds, shopifyGraphql } from "@/lib/shopify";
 
-type JobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELED";
-
 export async function reorderProductMedia(productId: string, orderedMediaIds: string[]) {
   const moves = orderedMediaIds.map((id, index) => ({ id, newPosition: index.toString() }));
   const data = await shopifyGraphql<{
@@ -28,13 +26,12 @@ export async function pollShopifyJob(jobId: string, timeoutMs = 120000) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const data = await shopifyGraphql<{ job: { id: string; done: boolean; status: JobStatus } | null }>(
-      `query Job($id: ID!) { job(id: $id) { id done status } }`,
+    const data = await shopifyGraphql<{ job: { id: string; done: boolean } | null }>(
+      `query Job($id: ID!) { job(id: $id) { id done } }`,
       { id: jobId }
     );
 
     if (data.job?.done) {
-      if (data.job.status !== "COMPLETED") throw new Error(`Shopify reorder job ended with ${data.job.status}.`);
       return;
     }
 

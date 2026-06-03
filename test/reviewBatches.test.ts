@@ -32,6 +32,7 @@ function product(id: string): ShopifyProduct {
     title: id.toUpperCase(),
     handle: id,
     variantsSkus: [id],
+    media: [],
     mediaIds: [],
     firstImageUrl: null,
     mediaImageUrls: [],
