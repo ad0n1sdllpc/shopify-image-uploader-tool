@@ -24,7 +24,7 @@ export default function ImageSelector({
   const [order, setOrder] = useState(existingSelection?.orderedImagePaths ?? defaultOrder);
   const [firstPath, setFirstPath] = useState(existingSelection?.selectedFirstImagePath ?? order[0]);
   const [mode, setMode] = useState<UploadMode>(existingSelection?.mode ?? "append-folder");
-  const [deleteOldMedia, setDeleteOldMedia] = useState(existingSelection?.deleteOldMedia ?? false);
+  const [deleteOldMedia, setDeleteOldMedia] = useState(existingSelection?.deleteOldMedia ?? true);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const representativeProduct = useMemo(() => {
     return [...match.selectedProducts].sort((first, second) => productMediaUrls(second).length - productMediaUrls(first).length || second.totalMediaCount - first.totalMediaCount)[0] ?? null;

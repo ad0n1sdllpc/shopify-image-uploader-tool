@@ -7,7 +7,7 @@ export function defaultSelection(match: ProductMatch): UploadSelection {
     selectedFirstImagePath: match.folder.images[0]?.absolutePath ?? "",
     orderedImagePaths: match.folder.images.map((image) => image.absolutePath),
     mode: "append-folder" as UploadMode,
-    deleteOldMedia: false
+    deleteOldMedia: true
   };
 }
 

@@ -9,6 +9,7 @@ import ProductMatchTable from "@/components/ProductMatchTable";
 import ReviewUploadModal from "@/components/ReviewUploadModal";
 import ThemeToggle from "@/components/ThemeToggle";
 import UploadProgress from "@/components/UploadProgress";
+import { DEFAULT_REVIEW_BATCH_GROUP_SIZE, FALLBACK_SECONDS_PER_PRODUCT, batchStatusForSelection, createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob, type ReviewBatchPlan } from "@/lib/reviewBatches";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
 import type { ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
 
@@ -29,6 +30,8 @@ type Store = {
   matches: ProductMatch[];
   selections: UploadSelection[];
   excludedReviewProductIds: string[];
+  completedReviewFolderIds: string[];
+  uploadSecondsPerProduct: number | null;
   lastJob: UploadJob | null;
 };
 
@@ -52,6 +55,8 @@ type PersistedStore = {
     deleteOldMedia: boolean;
   }[];
   excludedReviewProductIds: string[];
+  completedReviewFolderIds: string[];
+  uploadSecondsPerProduct: number | null;
   lastJob: UploadJob | null;
 };
 
@@ -62,7 +67,16 @@ type CheckpointFile = {
   state: PersistedStore;
 };
 
-const emptyStore: Store = { scan: null, products: [], matches: [], selections: [], excludedReviewProductIds: [], lastJob: null };
+const emptyStore: Store = {
+  scan: null,
+  products: [],
+  matches: [],
+  selections: [],
+  excludedReviewProductIds: [],
+  completedReviewFolderIds: [],
+  uploadSecondsPerProduct: null,
+  lastJob: null
+};
 
 function normalizeProduct(product: ShopifyProduct): ShopifyProduct {
   return {
@@ -92,6 +106,8 @@ function compactStore(store: Store): PersistedStore {
       deleteOldMedia: selection.deleteOldMedia
     })),
     excludedReviewProductIds: store.excludedReviewProductIds,
+    completedReviewFolderIds: store.completedReviewFolderIds,
+    uploadSecondsPerProduct: store.uploadSecondsPerProduct,
     lastJob: store.lastJob
   };
 }
@@ -159,6 +175,8 @@ function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): 
     matches,
     selections,
     excludedReviewProductIds: saved.excludedReviewProductIds ?? [],
+    completedReviewFolderIds: saved.completedReviewFolderIds ?? [],
+    uploadSecondsPerProduct: saved.uploadSecondsPerProduct ?? null,
     lastJob: saved.lastJob ?? null
   };
 }
@@ -212,9 +230,13 @@ export default function AppShell({ page }: { page: PageKey }) {
   );
   const readySelections = useMemo(() => activeSelections(store.matches, store.selections), [store.matches, store.selections]);
   const includedReadySelections = useMemo(() => includedSelections(readySelections, store.excludedReviewProductIds), [readySelections, store.excludedReviewProductIds]);
+  const reviewBatchPlan = useMemo(
+    () => createReviewBatchPlan(includedReadySelections, store.completedReviewFolderIds, DEFAULT_REVIEW_BATCH_GROUP_SIZE),
+    [includedReadySelections, store.completedReviewFolderIds]
+  );
   const pageTitle = navItems.find((item) => item.key === page)?.label ?? "Dashboard";
   const includedProductCount = includedReadySelections.reduce((total, selection) => total + selection.products.length, 0);
-  const hasCheckpointState = Boolean(store.scan || store.products.length || store.matches.length || store.selections.length || store.lastJob);
+  const hasCheckpointState = Boolean(store.scan || store.products.length || store.matches.length || store.selections.length || store.completedReviewFolderIds.length || store.lastJob);
   const workflowStats = [
     ["Folders", store.scan?.folders.length ?? 0],
     ["Products", store.products.length],
@@ -289,7 +311,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     setError(null);
     try {
       const scan = await request<ScanResult>(`/api/scan?path=${encodeURIComponent(folderPath)}`);
-      setStore((current) => ({ ...current, scan, matches: [], selections: [], excludedReviewProductIds: [] }));
+      setStore((current) => ({ ...current, scan, matches: [], selections: [], excludedReviewProductIds: [], completedReviewFolderIds: [] }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -314,7 +336,8 @@ export default function AppShell({ page }: { page: PageKey }) {
         products: productsResponse.products,
         matches: matchResponse.matches,
         selections: current.scan ? current.selections.filter((selection) => matchResponse.matches.some((match) => match.folder.id === selection.folder.id)) : [],
-        excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matchResponse.matches))
+        excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matchResponse.matches)),
+        completedReviewFolderIds: pruneCompletedFolderIds(current.completedReviewFolderIds, activeSelections(matchResponse.matches, current.selections))
       }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -346,7 +369,8 @@ export default function AppShell({ page }: { page: PageKey }) {
         ...current,
         matches,
         selections,
-        excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matches))
+        excludedReviewProductIds: keepCurrentExcludedProductIds(current.excludedReviewProductIds, matchedProductIds(matches)),
+        completedReviewFolderIds: pruneCompletedFolderIds(current.completedReviewFolderIds, activeSelections(matches, selections))
       };
     });
   }
@@ -366,16 +390,31 @@ export default function AppShell({ page }: { page: PageKey }) {
     }));
   }
 
-  async function runUpload(dryRun: boolean, removeWhiteBackground: boolean) {
+  async function runUpload(dryRun: boolean, removeWhiteBackground: boolean, selectionsToUpload: UploadSelection[] = includedSelections(activeSelections(store.matches, store.selections), store.excludedReviewProductIds)) {
     setBusy(true);
     setError(null);
+    const startedAt = Date.now();
     try {
       const response = await request<{ job: UploadJob }>(dryRun ? "/api/uploads/dry-run" : "/api/uploads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections: includedSelections(activeSelections(store.matches, store.selections), store.excludedReviewProductIds), options: { removeWhiteBackground } })
+        body: JSON.stringify({ selections: selectionsToUpload, options: { removeWhiteBackground } })
       });
-      setStore((current) => ({ ...current, lastJob: response.job }));
+      setStore((current) => {
+        const nextStore: Store = { ...current, lastJob: response.job };
+        if (!dryRun) {
+          const successfulFolderIds = successfulFolderIdsForJob(response.job, selectionsToUpload);
+          nextStore.completedReviewFolderIds = Array.from(new Set([...current.completedReviewFolderIds, ...successfulFolderIds]));
+          if (response.job.products.length > 0) {
+            nextStore.uploadSecondsPerProduct = Math.max(1, Math.round((Date.now() - startedAt) / 1000 / response.job.products.length));
+          }
+        }
+        return nextStore;
+      });
+      if (!dryRun) {
+        const successfulFolderIds = successfulFolderIdsForJob(response.job, selectionsToUpload);
+        setNotice(`${successfulFolderIds.length} tile group(s) completed in this batch. Failed groups stay in the queue for retry.`);
+      }
       await loadHistory();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -411,6 +450,19 @@ export default function AppShell({ page }: { page: PageKey }) {
       ...current,
       excludedReviewProductIds: current.excludedReviewProductIds.filter((id) => !productIdSet.has(id))
     }));
+  }
+
+  function markReviewBatchUploaded(folderIds: string[]) {
+    setStore((current) => ({
+      ...current,
+      completedReviewFolderIds: Array.from(new Set([...current.completedReviewFolderIds, ...folderIds]))
+    }));
+    setNotice(`${folderIds.length} tile group(s) marked uploaded. The next batch is ready.`);
+  }
+
+  function resetReviewBatchProgress() {
+    setStore((current) => ({ ...current, completedReviewFolderIds: [] }));
+    setNotice("Batch progress reset. Product selections were not changed.");
   }
 
   useEffect(() => {
@@ -510,12 +562,16 @@ export default function AppShell({ page }: { page: PageKey }) {
               busy={busy}
               selections={readySelections}
               includedSelections={includedReadySelections}
+              batchPlan={reviewBatchPlan}
               excludedProductIds={store.excludedReviewProductIds}
               lastJob={store.lastJob}
+              secondsPerProduct={store.uploadSecondsPerProduct ?? FALLBACK_SECONDS_PER_PRODUCT}
               runUpload={runUpload}
               onClearAll={clearReviewProducts}
               onSelectAll={selectReviewProducts}
               onToggleProduct={setReviewProductIncluded}
+              onMarkBatchUploaded={markReviewBatchUploaded}
+              onResetBatchProgress={resetReviewBatchProgress}
             />
           ) : (
             <HistoryPage history={history} refresh={loadHistory} />
@@ -737,31 +793,42 @@ function ReviewPage({
   busy,
   selections,
   includedSelections,
+  batchPlan,
   excludedProductIds,
   lastJob,
+  secondsPerProduct,
   runUpload,
   onClearAll,
   onSelectAll,
-  onToggleProduct
+  onToggleProduct,
+  onMarkBatchUploaded,
+  onResetBatchProgress
 }: {
   busy: boolean;
   selections: UploadSelection[];
   includedSelections: UploadSelection[];
+  batchPlan: ReviewBatchPlan;
   excludedProductIds: string[];
   lastJob: UploadJob | null;
-  runUpload: (dryRun: boolean, removeWhiteBackground: boolean) => void;
+  secondsPerProduct: number;
+  runUpload: (dryRun: boolean, removeWhiteBackground: boolean, selectionsToUpload?: UploadSelection[]) => void;
   onClearAll: (productIds: string[]) => void;
   onSelectAll: (productIds: string[]) => void;
   onToggleProduct: (productId: string, included: boolean) => void;
+  onMarkBatchUploaded: (folderIds: string[]) => void;
+  onResetBatchProgress: () => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [removeWhiteBackground, setRemoveWhiteBackground] = useState(false);
   const excludedProductIdSet = new Set(excludedProductIds);
   const allReviewProductIds = selections.flatMap((selection) => selection.products.map((product) => product.id));
   const includedProductCount = includedSelections.reduce((total, selection) => total + selection.products.length, 0);
+  const currentBatchFolderIds = batchPlan.currentBatchSelections.map((selection) => selection.folder.id);
+  const currentBatchEstimate = formatDuration(batchPlan.currentProductCount * secondsPerProduct);
+  const remainingEstimate = formatDuration(batchPlan.remainingProductCount * secondsPerProduct);
   return (
     <div className="space-y-4">
-      <ReviewUploadModal open={modalOpen} disabled={busy || includedSelections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true, removeWhiteBackground)} onUpload={() => runUpload(false, removeWhiteBackground)} />
+      <ReviewUploadModal open={modalOpen} disabled={busy || batchPlan.currentBatchSelections.length === 0} onClose={() => setModalOpen(false)} onDryRun={() => runUpload(true, removeWhiteBackground, batchPlan.currentBatchSelections)} onUpload={() => runUpload(false, removeWhiteBackground, batchPlan.currentBatchSelections)} />
       <section className="admin-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -775,11 +842,47 @@ function ReviewPage({
             <button disabled={busy || allReviewProductIds.length === 0 || includedProductCount === allReviewProductIds.length} onClick={() => onSelectAll(allReviewProductIds)} className="admin-button">
               Select all
             </button>
-            <button disabled={busy || includedSelections.length === 0} onClick={() => setModalOpen(true)} className="admin-button-danger">
+            <button disabled={busy || batchPlan.currentBatchSelections.length === 0} onClick={() => runUpload(true, removeWhiteBackground, batchPlan.currentBatchSelections)} className="admin-button">
+              Dry run current batch
+            </button>
+            <button disabled={busy || batchPlan.currentBatchSelections.length === 0} onClick={() => setModalOpen(true)} className="admin-button-danger">
               <UploadCloud size={17} />
-              Review And Confirm
+              Upload current batch
             </button>
           </div>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-4">
+          <div className="admin-panel px-3 py-2">
+            <p className="text-xs font-semibold uppercase admin-muted">Current batch</p>
+            <p className="mt-1 text-sm font-semibold">Batch {batchPlan.currentBatchNumber} of {batchPlan.totalBatchCount || 0}</p>
+            <p className="text-xs admin-muted">{batchPlan.currentGroupCount} groups / {batchPlan.currentProductCount} products</p>
+          </div>
+          <div className="admin-panel px-3 py-2">
+            <p className="text-xs font-semibold uppercase admin-muted">Remaining</p>
+            <p className="mt-1 text-sm font-semibold">{batchPlan.remainingGroupCount} groups / {batchPlan.remainingProductCount} products</p>
+            <p className="text-xs admin-muted">{batchPlan.uploadedGroupCount} groups uploaded</p>
+          </div>
+          <div className="admin-panel px-3 py-2">
+            <p className="text-xs font-semibold uppercase admin-muted">Estimated current</p>
+            <p className="mt-1 text-sm font-semibold">{currentBatchEstimate}</p>
+            <p className="text-xs admin-muted">{secondsPerProduct}s/product estimate</p>
+          </div>
+          <div className="admin-panel px-3 py-2">
+            <p className="text-xs font-semibold uppercase admin-muted">Estimated remaining</p>
+            <p className="mt-1 text-sm font-semibold">{remainingEstimate}</p>
+            <p className="text-xs admin-muted">Based on checked products</p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button disabled={busy || currentBatchFolderIds.length === 0} onClick={() => onMarkBatchUploaded(currentBatchFolderIds)} className="admin-button">
+            Mark batch uploaded
+          </button>
+          <button disabled={busy || currentBatchFolderIds.length === 0} onClick={() => onMarkBatchUploaded(currentBatchFolderIds)} className="admin-button-primary">
+            Next batch
+          </button>
+          <button disabled={busy || batchPlan.uploadedGroupCount === 0} onClick={onResetBatchProgress} className="admin-button">
+            Reset batch progress
+          </button>
         </div>
         <label className="mt-3 flex items-start gap-3 rounded-md border border-line bg-mist px-3 py-2 text-sm dark:border-white/10 dark:bg-white/5">
           <input
@@ -794,8 +897,19 @@ function ReviewPage({
           </span>
         </label>
       </section>
+      {batchPlan.uploadedSelections.length || batchPlan.waitingSelections.length ? (
+        <section className="admin-card p-4">
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className={batchStatusClass("current")}>Current batch: {batchPlan.currentGroupCount}</span>
+            <span className={batchStatusClass("waiting")}>Waiting: {batchPlan.waitingSelections.length}</span>
+            <span className={batchStatusClass("uploaded")}>Uploaded: {batchPlan.uploadedSelections.length}</span>
+          </div>
+        </section>
+      ) : null}
       <div className="grid gap-4">
-        {selections.map((selection) => (
+        {batchPlan.currentBatchSelections.map((selection) => {
+          const batchStatus = batchStatusForSelection(selection, batchPlan);
+          return (
           <div key={selection.folder.id} className="admin-card p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -803,6 +917,7 @@ function ReviewPage({
                 <p className="text-sm admin-muted">{selection.folder.relativePath}</p>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
+                <span className={batchStatusClass(batchStatus)}>{batchStatusLabel(batchStatus)}</span>
                 <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{modeLabel(selection.mode)}</span>
                 {selection.deleteOldMedia ? <span className="admin-badge bg-clay/10 text-clay dark:bg-clay/20 dark:text-[#ffb39d]">Delete after verification</span> : <span className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">Keep old media</span>}
               </div>
@@ -836,8 +951,9 @@ function ReviewPage({
               </div>
             </div>
           </div>
-        ))}
+        );})}
       </div>
+      {batchPlan.currentBatchSelections.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">All included tile groups are marked uploaded. Reset batch progress if you need to run them again.</p> : null}
       {lastJob ? <UploadProgress job={lastJob} /> : null}
     </div>
   );
@@ -866,4 +982,26 @@ function modeLabel(mode: UploadMode) {
   if (mode === "replace-first") return "Replace first only";
   if (mode === "replace-gallery") return "Replace full gallery";
   return "Replace first + upload all";
+}
+
+function formatDuration(totalSeconds: number) {
+  if (totalSeconds <= 0) return "~0m";
+  const minutes = Math.max(1, Math.round(totalSeconds / 60));
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours === 0) return `~${remainingMinutes}m`;
+  if (remainingMinutes === 0) return `~${hours}h`;
+  return `~${hours}h ${remainingMinutes}m`;
+}
+
+function batchStatusLabel(status: "uploaded" | "current" | "waiting") {
+  if (status === "uploaded") return "Uploaded";
+  if (status === "waiting") return "Waiting";
+  return "Current batch";
+}
+
+function batchStatusClass(status: "uploaded" | "current" | "waiting") {
+  if (status === "uploaded") return "admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]";
+  if (status === "waiting") return "admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65";
+  return "admin-badge bg-blue-100 text-blue-800 dark:bg-blue-300/20 dark:text-blue-200";
 }

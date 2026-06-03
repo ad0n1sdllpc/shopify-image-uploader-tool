@@ -65,7 +65,7 @@ describe("review selection planning", () => {
     expect(selection.selectedFirstImagePath).toBe("/tiles/11AW1/1.jpg");
     expect(selection.orderedImagePaths).toEqual(["/tiles/11AW1/1.jpg", "/tiles/11AW1/2.jpg"]);
     expect(selection.mode).toBe("append-folder");
-    expect(selection.deleteOldMedia).toBe(false);
+    expect(selection.deleteOldMedia).toBe(true);
   });
 
   it("uses saved image selector overrides when present", () => {
