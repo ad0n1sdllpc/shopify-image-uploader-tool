@@ -104,10 +104,26 @@ function normalizeProduct(product: ShopifyProduct): ShopifyProduct {
   };
 }
 
+function compactProductForStorage(product: ShopifyProduct): ShopifyProduct {
+  const firstImageUrl = product.firstImageUrl ?? product.mediaImageUrls?.[0] ?? product.media?.find((item) => item.url)?.url ?? null;
+
+  return {
+    id: product.id,
+    title: product.title,
+    handle: product.handle,
+    variantsSkus: product.variantsSkus,
+    media: [],
+    mediaIds: [],
+    firstImageUrl,
+    mediaImageUrls: firstImageUrl ? [firstImageUrl] : [],
+    totalMediaCount: product.totalMediaCount
+  };
+}
+
 function compactStore(store: Store): PersistedStore {
   return {
     scan: store.scan,
-    products: store.products,
+    products: store.products.map((product) => compactProductForStorage(product)),
     matches: store.matches.map((match) => ({
       folderId: match.folder.id,
       confidence: match.confidence,
@@ -127,7 +143,7 @@ function compactStore(store: Store): PersistedStore {
     excludedReviewProductIds: store.excludedReviewProductIds,
     completedReviewFolderIds: store.completedReviewFolderIds,
     uploadSecondsPerProduct: store.uploadSecondsPerProduct,
-    lastJob: store.lastJob
+    lastJob: null
   };
 }
 
