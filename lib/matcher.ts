@@ -1,4 +1,4 @@
-import type { ProductMatch, ShopifyProduct, TileFolder } from "@/types";
+import type { ImageFolder, ProductMatch, ShopifyProduct } from "@/types";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 
 export function normalizeName(value: string) {
@@ -38,8 +38,8 @@ function productCodeAliases(value: string) {
   return [...aliases].filter(Boolean);
 }
 
-function categoryTokens(folder: TileFolder) {
-  return [folder.category, folder.size, ...folder.relativePath.split(/[\\/]+/).slice(0, -1)]
+function categoryTokens(folder: ImageFolder) {
+  return [folder.category, ...folder.relativePath.split(/[\\/]+/).slice(0, -1)]
     .filter((value): value is string => Boolean(value))
     .flatMap((value) => normalizedSegments(value))
     .filter((token) => token.length > 2);
@@ -53,13 +53,13 @@ function productMentionsCategory(product: ShopifyProduct, tokens: string[]) {
   });
 }
 
-function preferCategoryMatches(folder: TileFolder, products: ShopifyProduct[]) {
+function preferCategoryMatches(folder: ImageFolder, products: ShopifyProduct[]) {
   const tokens = categoryTokens(folder);
   const categoryMatches = products.filter((product) => productMentionsCategory(product, tokens));
   return categoryMatches.length > 0 ? categoryMatches : products;
 }
 
-function codeSegmentMatches(folder: TileFolder, folderNames: string[], products: ShopifyProduct[]) {
+function codeSegmentMatches(folder: ImageFolder, folderNames: string[], products: ShopifyProduct[]) {
   const matches = products.filter((product) => {
     return productValues(product).some((value) => hasProductCodeSegment(value, folderNames));
   });
@@ -71,7 +71,7 @@ function normalizedValueMatches(value: string, folderNames: string[]) {
   return folderNames.some((folderName) => normalized.includes(folderName) || folderName.includes(normalized));
 }
 
-function toMatch(folder: TileFolder, candidates: ShopifyProduct[], reason: string, partial = false): ProductMatch {
+function toMatch(folder: ImageFolder, candidates: ShopifyProduct[], reason: string, partial = false): ProductMatch {
   if (candidates.length === 0) {
     return { folder, confidence: "No Match", product: null, candidates: [], selectedProducts: [], reason: "No Shopify product matched this folder." };
   }
@@ -90,8 +90,8 @@ function toMatch(folder: TileFolder, candidates: ShopifyProduct[], reason: strin
   };
 }
 
-export function matchTileFolder(folder: TileFolder, products: ShopifyProduct[]): ProductMatch {
-  const folderNames = productCodeAliases(folder.productCode ?? folder.tileName);
+export function matchImageFolder(folder: ImageFolder, products: ShopifyProduct[]): ProductMatch {
+  const folderNames = productCodeAliases(folder.productCode);
 
   const skuMatches = exactMatches(folderNames, products, (product) => product.variantsSkus);
   if (skuMatches.length === 1) return toMatch(folder, skuMatches, "Matched exact variant SKU.");
@@ -129,6 +129,6 @@ export function matchTileFolder(folder: TileFolder, products: ShopifyProduct[]):
   return toMatch(folder, sortProductsByVariantPrefix(preferCategoryMatches(folder, partialMatches)), "Matched partial product code in Shopify product data.", true);
 }
 
-export function matchTileFolders(folders: TileFolder[], products: ShopifyProduct[]) {
-  return folders.map((folder) => matchTileFolder(folder, products));
+export function matchImageFolders(folders: ImageFolder[], products: ShopifyProduct[]) {
+  return folders.map((folder) => matchImageFolder(folder, products));
 }

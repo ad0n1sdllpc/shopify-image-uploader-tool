@@ -82,7 +82,7 @@ function noMatchExportText(noMatches: ProductMatch[]) {
     "No matches",
     `${noMatches.length} folder(s) need manual product selection.`,
     "",
-    ...noMatches.map((match, index) => `${index + 1}. ${match.folder.relativePath || match.folder.tileName}`)
+    ...noMatches.map((match, index) => `${index + 1}. ${match.folder.relativePath || match.folder.name}`)
   ];
   return lines.join("\n");
 }
@@ -116,7 +116,7 @@ function MatchTable({
           {matches.map((match) => (
             <tr key={match.folder.id} className="admin-table-row align-top">
               <td className="px-3 py-2">
-                <p className="font-medium">{match.folder.tileName}</p>
+                <p className="font-medium">{match.folder.name}</p>
                 <p className="text-xs admin-muted">{match.folder.relativePath}</p>
               </td>
               <td className="px-3 py-2">

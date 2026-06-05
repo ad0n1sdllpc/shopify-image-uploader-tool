@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { LocalImage, ScanResult, TileFolder } from "@/types";
+import type { ImageFolder, LocalImage, ScanResult } from "@/types";
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 const MIME_TYPES: Record<string, string> = {
@@ -18,7 +18,7 @@ export function getAllowedImagePaths() {
   return allowedImagePaths;
 }
 
-export function resolveTileRoot(inputPath?: string) {
+export function resolveImageRoot(inputPath?: string) {
   const rawPath = inputPath?.trim() || ".";
   return path.resolve(process.cwd(), rawPath);
 }
@@ -42,8 +42,8 @@ async function safeDirectoryEntries(folderPath: string) {
   }
 }
 
-export async function scanTilesFolder(inputPath?: string): Promise<ScanResult> {
-  const rootPath = resolveTileRoot(inputPath);
+export async function scanImageFolders(inputPath?: string): Promise<ScanResult> {
+  const rootPath = resolveImageRoot(inputPath);
   const rootStat = await fs.stat(rootPath).catch(() => null);
 
   if (!rootStat?.isDirectory()) {
@@ -51,7 +51,7 @@ export async function scanTilesFolder(inputPath?: string): Promise<ScanResult> {
   }
 
   const nextAllowedPaths = new Set<string>();
-  const folders: TileFolder[] = [];
+  const folders: ImageFolder[] = [];
 
   async function walk(folderPath: string) {
     const entries = await safeDirectoryEntries(folderPath);
@@ -84,8 +84,7 @@ export async function scanTilesFolder(inputPath?: string): Promise<ScanResult> {
       images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       folders.push({
         id: toId(folderPath),
-        size: category,
-        tileName: productCode,
+        name: productCode,
         category,
         productCode,
         absolutePath: folderPath,

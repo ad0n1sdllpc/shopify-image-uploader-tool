@@ -5,16 +5,17 @@ import type { UploadSelection } from "@/types";
 const selection: UploadSelection = {
   folder: {
     id: "folder",
-    size: "60x60",
-    tileName: "LUZ-14MEA",
-    absolutePath: "/TILES/60x60/LUZ-14MEA",
+    name: "LUZ-14MEA",
+    productCode: "LUZ-14MEA",
+    category: "60x60",
+    absolutePath: "/IMAGES/60x60/LUZ-14MEA",
     relativePath: "60x60/LUZ-14MEA",
     images: []
   },
   products: [{
     id: "gid://shopify/Product/1",
-    title: "Luz Tile",
-    handle: "luz-tile",
+    title: "Luz Product",
+    handle: "luz-product",
     variantsSkus: ["LUZ-14MEA"],
     media: [{ id: "old-media", url: null, position: 0 }],
     mediaIds: ["old-media"],
@@ -55,11 +56,11 @@ describe("uploader planning", () => {
         {
           ...selection.products[0],
           id: "gid://shopify/Product/2",
-          title: "Min Tile"
+          title: "Min Product"
         }
       ]
     }]);
 
-    expect(job.products.map((product) => product.title)).toEqual(["Luz Tile", "Min Tile"]);
+    expect(job.products.map((product) => product.title)).toEqual(["Luz Product", "Min Product"]);
   });
 });

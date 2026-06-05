@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 type ThemeMode = "system" | "light" | "dark";
 
-const storageKey = "tile-uploader-theme";
+const storageKey = "image-uploader-theme";
 
 const options: { mode: ThemeMode; label: string; icon: ElementType }[] = [
   { mode: "light", label: "Light theme", icon: Sun },

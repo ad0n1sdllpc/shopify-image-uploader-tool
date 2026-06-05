@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
-import type { LocalImage, ProductMatch, ShopifyProduct, TileFolder, UploadSelection } from "@/types";
+import type { ImageFolder, LocalImage, ProductMatch, ShopifyProduct, UploadSelection } from "@/types";
 
 function image(name: string): LocalImage {
   return {
     id: name,
     name,
-    absolutePath: `/tiles/11AW1/${name}`,
+    absolutePath: `/images/11AW1/${name}`,
     relativePath: `11AW1/${name}`,
     previewUrl: `/api/images?path=${name}`,
     sizeBytes: 100,
@@ -15,12 +15,13 @@ function image(name: string): LocalImage {
   };
 }
 
-function folder(overrides: Partial<TileFolder> = {}): TileFolder {
+function folder(overrides: Partial<ImageFolder> = {}): ImageFolder {
   return {
     id: overrides.id ?? "folder-1",
-    size: overrides.size ?? "10x10",
-    tileName: overrides.tileName ?? "11AW1",
-    absolutePath: overrides.absolutePath ?? "/tiles/11AW1",
+    name: overrides.name ?? "11AW1",
+    productCode: overrides.productCode ?? "11AW1",
+    category: overrides.category ?? "10x10",
+    absolutePath: overrides.absolutePath ?? "/images/11AW1",
     relativePath: overrides.relativePath ?? "10x10/11AW1",
     images: overrides.images ?? [image("1.jpg"), image("2.jpg")]
   };
@@ -54,7 +55,7 @@ function match(overrides: Partial<ProductMatch> = {}): ProductMatch {
     product: overrides.product ?? selectedProducts[0] ?? null,
     candidates: overrides.candidates ?? selectedProducts,
     selectedProducts,
-    reason: overrides.reason ?? "Grouped by tile code."
+    reason: overrides.reason ?? "Grouped by product code."
   };
 }
 
@@ -63,8 +64,8 @@ describe("review selection planning", () => {
     const [selection] = activeSelections([match()], []);
 
     expect(selection.products.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
-    expect(selection.selectedFirstImagePath).toBe("/tiles/11AW1/1.jpg");
-    expect(selection.orderedImagePaths).toEqual(["/tiles/11AW1/1.jpg", "/tiles/11AW1/2.jpg"]);
+    expect(selection.selectedFirstImagePath).toBe("/images/11AW1/1.jpg");
+    expect(selection.orderedImagePaths).toEqual(["/images/11AW1/1.jpg", "/images/11AW1/2.jpg"]);
     expect(selection.mode).toBe("append-folder");
     expect(selection.deleteOldMedia).toBe(true);
   });
@@ -74,8 +75,8 @@ describe("review selection planning", () => {
     const savedSelection: UploadSelection = {
       folder: nextMatch.folder,
       products: [product("old", "OLD")],
-      selectedFirstImagePath: "/tiles/11AW1/2.jpg",
-      orderedImagePaths: ["/tiles/11AW1/2.jpg", "/tiles/11AW1/1.jpg"],
+      selectedFirstImagePath: "/images/11AW1/2.jpg",
+      orderedImagePaths: ["/images/11AW1/2.jpg", "/images/11AW1/1.jpg"],
       mode: "replace-gallery",
       deleteOldMedia: true
     };
@@ -83,8 +84,8 @@ describe("review selection planning", () => {
     const [selection] = activeSelections([nextMatch], [savedSelection]);
 
     expect(selection.products.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
-    expect(selection.selectedFirstImagePath).toBe("/tiles/11AW1/2.jpg");
-    expect(selection.orderedImagePaths).toEqual(["/tiles/11AW1/2.jpg", "/tiles/11AW1/1.jpg"]);
+    expect(selection.selectedFirstImagePath).toBe("/images/11AW1/2.jpg");
+    expect(selection.orderedImagePaths).toEqual(["/images/11AW1/2.jpg", "/images/11AW1/1.jpg"]);
     expect(selection.mode).toBe("replace-gallery");
     expect(selection.deleteOldMedia).toBe(true);
   });

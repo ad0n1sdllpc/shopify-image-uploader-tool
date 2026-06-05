@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { matchTileFolder, normalizeName } from "@/lib/matcher";
-import type { ShopifyProduct, TileFolder } from "@/types";
+import { matchImageFolder, normalizeName } from "@/lib/matcher";
+import type { ImageFolder, ShopifyProduct } from "@/types";
 
-const folder: TileFolder = {
+const folder: ImageFolder = {
   id: "folder-1",
-  size: "60x60",
-  tileName: "LUZ-14MEA",
-  absolutePath: "/TILES/60x60/LUZ-14MEA",
+  name: "LUZ-14MEA",
+  productCode: "LUZ-14MEA",
+  absolutePath: "/IMAGES/60x60/LUZ-14MEA",
   relativePath: "60x60/LUZ-14MEA",
   images: []
 };
@@ -31,7 +31,7 @@ describe("matcher", () => {
   });
 
   it("prioritizes exact sku matches", () => {
-    const match = matchTileFolder(folder, [
+    const match = matchImageFolder(folder, [
       product({ id: "title", title: "LUZ-14MEA" }),
       product({ id: "sku", title: "Other", variantsSkus: ["LUZ-14MEA"] })
     ]);
@@ -41,8 +41,8 @@ describe("matcher", () => {
     expect(match.selectedProducts.map((item) => item.id)).toEqual(["sku"]);
   });
 
-  it("groups sibling products that end with the same folder tile code", () => {
-    const match = matchTileFolder({ ...folder, tileName: "11AW1" }, [
+  it("groups sibling products that end with the same folder product code", () => {
+    const match = matchImageFolder({ ...folder, name: "11AW1", productCode: "11AW1" }, [
       product({ id: "luz", title: "LUZ-11AW1", handle: "luz-11aw1" }),
       product({ id: "min", title: "MIN-11AW1", handle: "min-11aw1" }),
       product({ id: "vis", title: "VIS-11AW1", handle: "vis-11aw1" }),
@@ -54,8 +54,8 @@ describe("matcher", () => {
     expect(match.candidates.map((item) => item.id)).toEqual(["luz", "vis", "min"]);
   });
 
-  it("does not group tile codes embedded inside a longer suffix segment", () => {
-    const match = matchTileFolder({ ...folder, tileName: "L31" }, [
+  it("does not group product codes embedded inside a longer suffix segment", () => {
+    const match = matchImageFolder({ ...folder, name: "L31", productCode: "L31" }, [
       product({ id: "luz", title: "LUZ-L31", handle: "luz-l31" }),
       product({ id: "min", title: "MIN-L31", handle: "min-l31" }),
       product({ id: "vis", title: "VIS-L31", handle: "vis-l31" }),
@@ -68,14 +68,14 @@ describe("matcher", () => {
   });
 
   it("falls back to partial title matches", () => {
-    const match = matchTileFolder(folder, [product({ id: "partial", title: "Premium Luz 14MEA Tile", handle: "premium-luz-tile" })]);
+    const match = matchImageFolder(folder, [product({ id: "partial", title: "Premium Luz 14MEA Product", handle: "premium-luz-product" })]);
 
     expect(match.confidence).toBe("Partial");
     expect(match.product?.id).toBe("partial");
   });
 
   it("matches general product folders by product code and category", () => {
-    const match = matchTileFolder({ ...folder, size: "- FAUCET", category: "- FAUCET", productCode: "FC-2877", tileName: "FC-2877" }, [
+    const match = matchImageFolder({ ...folder, category: "- FAUCET", productCode: "FC-2877", name: "FC-2877" }, [
       product({ id: "faucet", title: "FC-2877 Faucet", handle: "fc-2877-faucet" }),
       product({ id: "drain", title: "FC-2877 Drain", handle: "fc-2877-drain" })
     ]);
@@ -85,15 +85,15 @@ describe("matcher", () => {
   });
 
   it("matches folder codes without parenthetical descriptors", () => {
-    const match = matchTileFolder({ ...folder, productCode: "619X1 (SMART)", tileName: "619X1 (SMART)" }, [
+    const match = matchImageFolder({ ...folder, productCode: "619X1 (SMART)", name: "619X1 (SMART)" }, [
       product({ id: "smart-toilet", title: "619X1 Luxury Smart Toilet", handle: "619x1-luxury-smart-toilet" })
     ]);
 
     expect(match.product?.id).toBe("smart-toilet");
   });
 
-  it("keeps no-match behavior when no product includes the tile code", () => {
-    const match = matchTileFolder({ ...folder, tileName: "NOPE" }, [product({ id: "other", title: "LUZ-11AW2", handle: "luz-11aw2" })]);
+  it("keeps no-match behavior when no product includes the folder code", () => {
+    const match = matchImageFolder({ ...folder, name: "NOPE", productCode: "NOPE" }, [product({ id: "other", title: "LUZ-11AW2", handle: "luz-11aw2" })]);
 
     expect(match.confidence).toBe("No Match");
     expect(match.selectedProducts).toEqual([]);
