@@ -27,4 +27,19 @@ describe("scanner", () => {
     expect(scan.folders[0].tileName).toBe("LUZ-14MEA");
     expect(scan.folders[0].images.map((image) => image.name)).toEqual(["image1.jpg", "image2.png"]);
   });
+
+  it("discovers product image folders under any category path", async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "product-scan-"));
+    const productFolder = path.join(tempDir, "SANITARY WARES", "- FAUCET", "FC-2877");
+    await fs.mkdir(productFolder, { recursive: true });
+    await fs.writeFile(path.join(productFolder, "FC-2877 faucet Angles.jpg"), "jpg");
+    await fs.writeFile(path.join(productFolder, "FC-2877.jpg"), "jpg");
+
+    const scan = await scanTilesFolder(tempDir);
+
+    expect(scan.folders).toHaveLength(1);
+    expect(scan.folders[0].category).toBe("- FAUCET");
+    expect(scan.folders[0].productCode).toBe("FC-2877");
+    expect(scan.folders[0].relativePath).toBe(path.join("SANITARY WARES", "- FAUCET", "FC-2877"));
+  });
 });

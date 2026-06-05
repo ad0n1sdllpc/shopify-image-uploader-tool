@@ -74,6 +74,24 @@ describe("matcher", () => {
     expect(match.product?.id).toBe("partial");
   });
 
+  it("matches general product folders by product code and category", () => {
+    const match = matchTileFolder({ ...folder, size: "- FAUCET", category: "- FAUCET", productCode: "FC-2877", tileName: "FC-2877" }, [
+      product({ id: "faucet", title: "FC-2877 Faucet", handle: "fc-2877-faucet" }),
+      product({ id: "drain", title: "FC-2877 Drain", handle: "fc-2877-drain" })
+    ]);
+
+    expect(match.confidence).toBe("Partial");
+    expect(match.product?.id).toBe("faucet");
+  });
+
+  it("matches folder codes without parenthetical descriptors", () => {
+    const match = matchTileFolder({ ...folder, productCode: "619X1 (SMART)", tileName: "619X1 (SMART)" }, [
+      product({ id: "smart-toilet", title: "619X1 Luxury Smart Toilet", handle: "619x1-luxury-smart-toilet" })
+    ]);
+
+    expect(match.product?.id).toBe("smart-toilet");
+  });
+
   it("keeps no-match behavior when no product includes the tile code", () => {
     const match = matchTileFolder({ ...folder, tileName: "NOPE" }, [product({ id: "other", title: "LUZ-11AW2", handle: "luz-11aw2" })]);
 

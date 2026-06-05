@@ -15,6 +15,8 @@ export type TileFolder = {
   id: string;
   size: string;
   tileName: string;
+  category?: string;
+  productCode?: string;
   absolutePath: string;
   relativePath: string;
   images: LocalImage[];
