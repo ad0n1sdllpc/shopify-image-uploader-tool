@@ -11,12 +11,11 @@ export type LocalImage = {
   mimeType: string;
 };
 
-export type TileFolder = {
+export type ImageFolder = {
   id: string;
-  size: string;
-  tileName: string;
+  name: string;
   category?: string;
-  productCode?: string;
+  productCode: string;
   absolutePath: string;
   relativePath: string;
   images: LocalImage[];
@@ -25,7 +24,7 @@ export type TileFolder = {
 export type ScanResult = {
   rootPath: string;
   scannedAt: string;
-  folders: TileFolder[];
+  folders: ImageFolder[];
 };
 
 export type ShopifyProductMedia = {
@@ -63,7 +62,7 @@ export type MediaDeleteResult = {
 export type MatchConfidence = "Exact" | "Partial" | "Variant Group" | "Multiple Matches" | "No Match";
 
 export type ProductMatch = {
-  folder: TileFolder;
+  folder: ImageFolder;
   confidence: MatchConfidence;
   product: ShopifyProduct | null;
   candidates: ShopifyProduct[];
@@ -72,7 +71,7 @@ export type ProductMatch = {
 };
 
 export type UploadSelection = {
-  folder: TileFolder;
+  folder: ImageFolder;
   products: ShopifyProduct[];
   selectedFirstImagePath: string;
   orderedImagePaths: string[];
