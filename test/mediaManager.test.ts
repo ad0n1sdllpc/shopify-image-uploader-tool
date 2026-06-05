@@ -54,9 +54,10 @@ describe("media manager selection", () => {
     const matches: ProductMatch[] = [{
       folder: {
         id: "folder-1",
-        size: "10x10",
-        tileName: "11AW1",
-        absolutePath: "/tiles/11AW1",
+        name: "11AW1",
+        productCode: "11AW1",
+        category: "10x10",
+        absolutePath: "/images/11AW1",
         relativePath: "10x10/11AW1",
         images: []
       },
@@ -64,7 +65,7 @@ describe("media manager selection", () => {
       product: selected,
       candidates: [selected, unselectedCandidate],
       selectedProducts: [selected, duplicateSelected],
-      reason: "Grouped by tile code."
+      reason: "Grouped by product code."
     }];
 
     expect(matchedMediaProducts(matches).map((item) => item.id)).toEqual(["selected"]);

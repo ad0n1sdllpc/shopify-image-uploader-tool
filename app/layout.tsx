@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Shopify Tile Image Uploader",
-  description: "Local visual uploader for Shopify tile product images"
+  title: "Shopify Image Uploader",
+  description: "Local visual uploader for Shopify product images"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `
               (() => {
                 try {
-                  const mode = localStorage.getItem("tile-uploader-theme") || "system";
+                  const mode = localStorage.getItem("image-uploader-theme") || "system";
                   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
                   const dark = mode === "dark" || (mode === "system" && prefersDark);
                   document.documentElement.classList.toggle("dark", dark);

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob } from "@/lib/reviewBatches";
-import type { LocalImage, ShopifyProduct, TileFolder, UploadJob, UploadSelection } from "@/types";
+import type { ImageFolder, LocalImage, ShopifyProduct, UploadJob, UploadSelection } from "@/types";
 
 function image(name: string): LocalImage {
   return {
     id: name,
     name,
-    absolutePath: `/tiles/${name}`,
+    absolutePath: `/images/${name}`,
     relativePath: name,
     previewUrl: `/api/images?path=${name}`,
     sizeBytes: 100,
@@ -15,13 +15,14 @@ function image(name: string): LocalImage {
   };
 }
 
-function folder(index: number): TileFolder {
+function folder(index: number): ImageFolder {
   return {
     id: `folder-${index}`,
-    size: "10x10",
-    tileName: `TILE-${index}`,
-    absolutePath: `/tiles/TILE-${index}`,
-    relativePath: `10x10/TILE-${index}`,
+    name: `PRODUCT-${index}`,
+    productCode: `PRODUCT-${index}`,
+    category: "10x10",
+    absolutePath: `/images/PRODUCT-${index}`,
+    relativePath: `10x10/PRODUCT-${index}`,
     images: [image(`${index}-1.jpg`), image(`${index}-2.jpg`)]
   };
 }
@@ -72,7 +73,7 @@ function job(statuses: Record<string, "success" | "failed">): UploadJob {
 }
 
 describe("review upload batches", () => {
-  it("splits included selections by tile group and keeps variants together", () => {
+  it("splits included selections by image group and keeps variants together", () => {
     const selections = Array.from({ length: 105 }, (_, index) => selection(index + 1));
     const plan = createReviewBatchPlan(selections, [], 100);
 
@@ -91,7 +92,7 @@ describe("review upload batches", () => {
     expect(plan.waitingSelections.map((item) => item.folder.id)).toEqual(["folder-5", "folder-6"]);
   });
 
-  it("marks only fully successful tile groups as completed", () => {
+  it("marks only fully successful image groups as completed", () => {
     const selections = [
       selection(1, ["luz-1", "min-1"]),
       selection(2, ["luz-2", "min-2"])

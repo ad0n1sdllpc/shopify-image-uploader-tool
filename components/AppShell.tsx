@@ -14,7 +14,7 @@ import { matchedMediaProducts } from "@/lib/mediaManager";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import { DEFAULT_REVIEW_BATCH_GROUP_SIZE, FALLBACK_SECONDS_PER_PRODUCT, batchStatusForSelection, createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob, type ReviewBatchPlan } from "@/lib/reviewBatches";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
-import type { MediaDeleteRequestItem, MediaDeleteResult, ProductMatch, ScanResult, ShopifyProduct, TileFolder, UploadJob, UploadMode, UploadSelection } from "@/types";
+import type { ImageFolder, MediaDeleteRequestItem, MediaDeleteResult, ProductMatch, ScanResult, ShopifyProduct, UploadJob, UploadMode, UploadSelection } from "@/types";
 
 type PageKey = "dashboard" | "scan" | "matching" | "media" | "selector" | "review" | "history";
 
@@ -65,7 +65,7 @@ type PersistedStore = {
 };
 
 type CheckpointFile = {
-  kind: "tile-uploader-checkpoint";
+  kind: "image-uploader-checkpoint";
   version: 1;
   exportedAt: string;
   state: PersistedStore;
@@ -218,13 +218,13 @@ function normalizeStoredStore(saved: Partial<Store> | Partial<PersistedStore>): 
 
 function checkpointFileName(date = new Date()) {
   const stamp = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  return `tile-uploader-checkpoint-${stamp}.json`;
+  return `image-uploader-checkpoint-${stamp}.json`;
 }
 
 function checkpointStateFromPayload(payload: unknown): Partial<Store> | Partial<PersistedStore> {
   if (!payload || typeof payload !== "object") throw new Error("Checkpoint file is not valid JSON data.");
   const maybeCheckpoint = payload as Partial<CheckpointFile>;
-  if (maybeCheckpoint.kind === "tile-uploader-checkpoint" && maybeCheckpoint.state) return maybeCheckpoint.state;
+  if (maybeCheckpoint.kind === "image-uploader-checkpoint" && maybeCheckpoint.state) return maybeCheckpoint.state;
   return payload as Partial<Store> | Partial<PersistedStore>;
 }
 
@@ -256,7 +256,7 @@ function storeWithRefreshedProducts(current: Store, products: ShopifyProduct[]):
 
 export default function AppShell({ page }: { page: PageKey }) {
   const [store, setStore] = useState<Store>(emptyStore);
-  const [folderPath, setFolderPath] = useState("./TILES");
+  const [folderPath, setFolderPath] = useState(".");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -265,12 +265,12 @@ export default function AppShell({ page }: { page: PageKey }) {
   const checkpointInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("tile-uploader-state");
+    const saved = window.localStorage.getItem("image-uploader-state");
     if (saved) {
       try {
         setStore(normalizeStoredStore(JSON.parse(saved) as Store));
       } catch {
-        window.localStorage.removeItem("tile-uploader-state");
+        window.localStorage.removeItem("image-uploader-state");
       }
     }
     setHydrated(true);
@@ -279,7 +279,7 @@ export default function AppShell({ page }: { page: PageKey }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem("tile-uploader-state", JSON.stringify(compactStore(store)));
+      window.localStorage.setItem("image-uploader-state", JSON.stringify(compactStore(store)));
     } catch (nextError) {
       setError(nextError instanceof Error ? `Could not save browser state: ${nextError.message}` : String(nextError));
     }
@@ -327,12 +327,12 @@ export default function AppShell({ page }: { page: PageKey }) {
     setNotice(null);
     try {
       const checkpoint: CheckpointFile = {
-        kind: "tile-uploader-checkpoint",
+        kind: "image-uploader-checkpoint",
         version: 1,
         exportedAt: new Date().toISOString(),
         state: compactStore(store)
       };
-      window.localStorage.setItem("tile-uploader-state", JSON.stringify(checkpoint.state));
+      window.localStorage.setItem("image-uploader-state", JSON.stringify(checkpoint.state));
       const blob = new Blob([JSON.stringify(checkpoint, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -476,7 +476,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     });
   }
 
-  function updateSelection(folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) {
+  function updateSelection(folder: ImageFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) {
     const nextSelection: UploadSelection = {
       folder,
       products,
@@ -499,7 +499,7 @@ export default function AppShell({ page }: { page: PageKey }) {
         deleteOldMedia
       }))
     }));
-    setNotice(deleteOldMedia ? "Delete old media after verification is now enabled for all matched tile groups." : "Delete old media after verification is now off for all matched tile groups.");
+    setNotice(deleteOldMedia ? "Delete old media after verification is now enabled for all matched image groups." : "Delete old media after verification is now off for all matched image groups.");
   }
 
   async function runUpload(dryRun: boolean, removeWhiteBackground: boolean, selectionsToUpload: UploadSelection[] = includedSelections(activeSelections(store.matches, store.selections), store.excludedReviewProductIds)) {
@@ -525,7 +525,7 @@ export default function AppShell({ page }: { page: PageKey }) {
       });
       if (!dryRun) {
         const successfulFolderIds = successfulFolderIdsForJob(response.job, selectionsToUpload);
-        setNotice(`${successfulFolderIds.length} tile group(s) completed in this batch. Failed groups stay in the queue for retry.`);
+        setNotice(`${successfulFolderIds.length} image group(s) completed in this batch. Failed groups stay in the queue for retry.`);
       }
       await loadHistory();
     } catch (nextError) {
@@ -569,7 +569,7 @@ export default function AppShell({ page }: { page: PageKey }) {
       ...current,
       completedReviewFolderIds: Array.from(new Set([...current.completedReviewFolderIds, ...folderIds]))
     }));
-    setNotice(`${folderIds.length} tile group(s) marked uploaded. The next batch is ready.`);
+    setNotice(`${folderIds.length} image group(s) marked uploaded. The next batch is ready.`);
   }
 
   function resetReviewBatchProgress() {
@@ -589,7 +589,7 @@ export default function AppShell({ page }: { page: PageKey }) {
             <UploadCloud size={19} />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">Tile Uploader</p>
+            <p className="truncate text-sm font-semibold">Image Uploader</p>
             <p className="truncate text-xs admin-muted">Shopify media ops</p>
           </div>
         </div>
@@ -674,7 +674,7 @@ export default function AppShell({ page }: { page: PageKey }) {
               fetchProducts={fetchProductsOnly}
               deleteMedia={deleteSelectedMedia}
               emptyTitle="Matched product media"
-              emptyDescription={store.matches.length > 0 ? "No Shopify products are selected in the current local matches." : "Run Product Matching first so Media Manager only shows products tied to your local tile folders."}
+              emptyDescription={store.matches.length > 0 ? "No Shopify products are selected in the current local matches." : "Run Product Matching first so Media Manager only shows products tied to your local image folders."}
               emptyActionHref="/matching"
               emptyActionLabel="Open Product Matching"
             />
@@ -742,7 +742,7 @@ function Dashboard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">Workflow overview</h2>
-            <p className="text-sm admin-muted">Bulk tile media work stays ready for review by default.</p>
+            <p className="text-sm admin-muted">Bulk image media work stays ready for review by default.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link href="/scan" className="admin-button">Scan</Link>
@@ -831,7 +831,7 @@ function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy
       <section className="admin-card p-4">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-0 flex-1">
-            <span className="text-xs font-semibold uppercase admin-muted">Local TILES folder path</span>
+            <span className="text-xs font-semibold uppercase admin-muted">Local image folder path</span>
             <input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} className="admin-input mt-1 w-full" />
           </label>
           <button disabled={busy} onClick={scanFolders} className="admin-button-primary">
@@ -855,8 +855,8 @@ function ScanPage({ busy, folderPath, setFolderPath, scanFolders, scan }: { busy
                 {folder.images.slice(0, 4).map((image) => <img key={image.id} src={image.previewUrl} alt={image.name} className="aspect-square rounded object-cover" />)}
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{folder.tileName}</p>
-                <p className="truncate text-xs admin-muted">{folder.size} - {folder.relativePath}</p>
+                <p className="truncate text-sm font-semibold">{folder.name}</p>
+                <p className="truncate text-xs admin-muted">{folder.category ? `${folder.category} - ` : ""}{folder.relativePath}</p>
                 <p className="mt-1 text-xs admin-muted">{folder.images.length} image(s)</p>
               </div>
             </div>
@@ -891,7 +891,7 @@ function SelectorPage({
   onSetDeleteOldMediaForAll
 }: {
   store: Store;
-  updateSelection: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
+  updateSelection: (folder: ImageFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
   onSetDeleteOldMediaForAll: (deleteOldMedia: boolean) => void;
 }) {
   const matches = store.matches.filter((match) => match.selectedProducts.length > 0);
@@ -1055,7 +1055,7 @@ function ReviewPage({
           <div key={selection.folder.id} className="admin-card p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="font-semibold">{selection.folder.tileName}</p>
+                <p className="font-semibold">{selection.folder.name}</p>
                 <p className="text-sm admin-muted">{selection.folder.relativePath}</p>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
@@ -1095,7 +1095,7 @@ function ReviewPage({
           </div>
         );})}
       </div>
-      {batchPlan.currentBatchSelections.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">All included tile groups are marked uploaded. Reset batch progress if you need to run them again.</p> : null}
+      {batchPlan.currentBatchSelections.length === 0 ? <p className="admin-card p-5 text-sm admin-muted">All included image groups are marked uploaded. Reset batch progress if you need to run them again.</p> : null}
       {lastJob ? <UploadProgress job={lastJob} /> : null}
     </div>
   );

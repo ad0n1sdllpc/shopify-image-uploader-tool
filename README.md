@@ -1,16 +1,16 @@
-# Shopify Tile Image Uploader
+# Shopify Image Uploader
 
-A local Shopify Admin media tool for high-volume tile product image work. It scans local tile folders, matches them to Shopify products, lets you review image order, uploads in batches, and includes media cleanup tools for duplicate Shopify images.
+A local Shopify Admin media tool for high-volume product image work. It scans local image folders, matches them to Shopify products, lets you review image order, uploads in batches, and includes media cleanup tools for duplicate Shopify images.
 
-This project is intended for store operators who manage many tile or surface products with repeated variants such as `LUZ-11AW1`, `VIS-11AW1`, and `MIN-11AW1`.
+This project is intended for store operators who manage many product image folders, including catalogs with repeated variants such as `LUZ-11AW1`, `VIS-11AW1`, and `MIN-11AW1`.
 
 ## Features
 
-- Scan local image folders such as `./TILES`.
-- Match local tile folders to Shopify products by tile code.
+- Scan local image folders such as `./IMAGES` or a category root like `./SANITARY WARES`.
+- Match local image folders to Shopify products by product code.
 - Group sibling product variants like `LUZ / VIS / MIN`.
 - Review local upload order before uploading.
-- Upload by batches of tile groups.
+- Upload by batches of image groups.
 - Replace first image, append images, or replace full gallery.
 - Optionally remove white backgrounds during upload without changing local files.
 - Delete old Shopify media after verification.
@@ -59,7 +59,7 @@ Create `.env.local`:
 SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
 SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_your_admin_api_token
 SHOPIFY_API_VERSION=2026-01
-TILE_UPLOAD_DB_PATH=./tile-uploader.db
+IMAGE_UPLOAD_DB_PATH=./image-uploader.db
 ```
 
 Start the local app:
@@ -76,26 +76,26 @@ http://localhost:3000
 
 ## Expected Folder Structure
 
-The scanner expects a local folder containing tile folders and image files. Example:
+The scanner expects a local folder containing product image folders and image files. Example:
 
 ```text
-TILES/
-  10x10/
-    11AW1/
-      1.jpg
-      2.jpg
-    11BC3/
-      1.png
-      2.jpg
-  30x30/
-    L31/
+IMAGES/
+  SANITARY WARES/
+    - FAUCET/
+      FC-2877/
+        FC-2877.jpg
+        FC-2877 faucet Angles.jpg
+  VINYL/
+    - VINYLS/
+      11AW1/
       1.jpg
       2.jpg
 ```
 
-The app uses the folder tile code, such as `11AW1`, to match Shopify products like:
+The app uses the folder product code, such as `FC-2877` or `11AW1`, to match Shopify products like:
 
 ```text
+FC-2877 Faucet
 LUZ-11AW1
 VIS-11AW1
 MIN-11AW1
@@ -109,11 +109,11 @@ MIN-11AW1
 
 2. **Product Matching**
    - Fetch Shopify products.
-   - Match local folder tile codes to Shopify products.
-   - Variant products are grouped by tile code where possible.
+   - Match local folder product codes to Shopify products.
+   - Variant products are grouped by product code where possible.
 
 3. **Image Selector**
-   - Review each tile folder.
+   - Review each image folder.
    - Choose upload mode.
    - Reorder local images.
    - Choose whether old media should be deleted after verification.
@@ -121,12 +121,12 @@ MIN-11AW1
 4. **Review Upload**
    - Products are included by default.
    - Use Clear all / Select all to control what uploads.
-   - Upload current batch by tile group.
+   - Upload current batch by image group.
    - Use dry run before live upload when needed.
 
 5. **Media Manager**
    - View matched Shopify product media.
-   - Group variants under the same tile code.
+   - Group variants under the same product code.
    - Select non-first duplicate images.
    - Bulk delete selected media with confirmation.
 
@@ -160,7 +160,7 @@ product-handle-gallery-3.jpg
 Recommended alt text pattern:
 
 ```text
-Product Title tile
+Product Title
 Product Title room view
 Product Title gallery image 3
 ```

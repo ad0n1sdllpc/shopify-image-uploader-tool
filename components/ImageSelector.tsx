@@ -6,7 +6,7 @@ import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from "@d
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Star } from "lucide-react";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
-import type { LocalImage, ProductMatch, ShopifyProduct, TileFolder, UploadMode, UploadSelection } from "@/types";
+import type { ImageFolder, LocalImage, ProductMatch, ShopifyProduct, UploadMode, UploadSelection } from "@/types";
 
 export default function ImageSelector({
   match,
@@ -19,7 +19,7 @@ export default function ImageSelector({
   position: number;
   total: number;
   existingSelection?: UploadSelection;
-  onChange: (folder: TileFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
+  onChange: (folder: ImageFolder, products: ShopifyProduct[], imagePaths: string[], firstPath: string, mode: UploadMode, deleteOldMedia: boolean) => void;
 }) {
   const defaultOrder = useMemo(() => match.folder.images.map((image) => image.absolutePath), [match.folder.images]);
   const [order, setOrder] = useState(existingSelection?.orderedImagePaths ?? defaultOrder);
@@ -32,9 +32,9 @@ export default function ImageSelector({
     return [...selectedProducts].sort((first, second) => productMediaUrls(second).length - productMediaUrls(first).length || second.totalMediaCount - first.totalMediaCount)[0] ?? null;
   }, [selectedProducts]);
   const selectedProductLabels = useMemo(() => {
-    const labels = selectedProducts.map((product) => productGroupLabel(product, match.folder.tileName));
+    const labels = selectedProducts.map((product) => productGroupLabel(product, match.folder.productCode));
     return Array.from(new Set(labels));
-  }, [match.folder.tileName, selectedProducts]);
+  }, [match.folder.productCode, selectedProducts]);
   const shopifyMediaUrls = representativeProduct ? productMediaUrls(representativeProduct) : [];
   const shopifyMediaCount = representativeProduct?.totalMediaCount ?? shopifyMediaUrls.length;
 
@@ -59,7 +59,7 @@ export default function ImageSelector({
             <span className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">
               {position} of {total}
             </span>
-            <h2 className="font-semibold">{match.folder.tileName}</h2>
+            <h2 className="font-semibold">{match.folder.name}</h2>
           </div>
           <p className="text-sm admin-muted">{match.folder.relativePath}</p>
           <p className="mt-1 text-xs admin-muted">
@@ -87,7 +87,7 @@ export default function ImageSelector({
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(300px,390px)_1fr]">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase admin-muted">Current Shopify media</p>
-          <ShopifyMediaGallery title={match.folder.tileName} mediaUrls={shopifyMediaUrls} mediaCount={shopifyMediaCount} />
+          <ShopifyMediaGallery title={match.folder.name} mediaUrls={shopifyMediaUrls} mediaCount={shopifyMediaCount} />
         </div>
 
         <div>
@@ -122,11 +122,11 @@ function productMediaUrls(product: ShopifyProduct) {
   return product.mediaImageUrls?.length ? product.mediaImageUrls : product.firstImageUrl ? [product.firstImageUrl] : [];
 }
 
-function productGroupLabel(product: ShopifyProduct, tileName: string) {
+function productGroupLabel(product: ShopifyProduct, productCode: string) {
   const candidates = [product.title, product.handle, ...product.variantsSkus].filter(Boolean);
   for (const candidate of candidates) {
     const parts = candidate.split("-");
-    if (parts.at(-1)?.toLowerCase() === tileName.toLowerCase() && parts.length > 1) {
+    if (parts.at(-1)?.toLowerCase() === productCode.toLowerCase() && parts.length > 1) {
       return parts.slice(0, -1).join("-").toUpperCase();
     }
   }

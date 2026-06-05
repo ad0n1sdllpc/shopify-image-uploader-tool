@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { LocalImage, ScanResult, TileFolder } from "@/types";
+import type { ImageFolder, LocalImage, ScanResult } from "@/types";
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 const MIME_TYPES: Record<string, string> = {
@@ -18,8 +18,8 @@ export function getAllowedImagePaths() {
   return allowedImagePaths;
 }
 
-export function resolveTileRoot(inputPath?: string) {
-  const rawPath = inputPath?.trim() || "./TILES";
+export function resolveImageRoot(inputPath?: string) {
+  const rawPath = inputPath?.trim() || ".";
   return path.resolve(process.cwd(), rawPath);
 }
 
@@ -42,61 +42,65 @@ async function safeDirectoryEntries(folderPath: string) {
   }
 }
 
-export async function scanTilesFolder(inputPath?: string): Promise<ScanResult> {
-  const rootPath = resolveTileRoot(inputPath);
+export async function scanImageFolders(inputPath?: string): Promise<ScanResult> {
+  const rootPath = resolveImageRoot(inputPath);
   const rootStat = await fs.stat(rootPath).catch(() => null);
 
   if (!rootStat?.isDirectory()) {
-    throw new Error(`TILES folder not found: ${rootPath}`);
+    throw new Error(`Image folder not found: ${rootPath}`);
   }
 
   const nextAllowedPaths = new Set<string>();
-  const folders: TileFolder[] = [];
-  const sizeEntries = await safeDirectoryEntries(rootPath);
+  const folders: ImageFolder[] = [];
 
-  for (const sizeEntry of sizeEntries.filter((entry) => entry.isDirectory())) {
-    const sizePath = path.join(rootPath, sizeEntry.name);
-    const tileEntries = await safeDirectoryEntries(sizePath);
+  async function walk(folderPath: string) {
+    const entries = await safeDirectoryEntries(folderPath);
+    const images: LocalImage[] = [];
 
-    for (const tileEntry of tileEntries.filter((entry) => entry.isDirectory())) {
-      const tilePath = path.join(sizePath, tileEntry.name);
-      const imageEntries = await safeDirectoryEntries(tilePath);
-      const images: LocalImage[] = [];
+    for (const imageEntry of entries.filter((entry) => entry.isFile())) {
+      const extension = path.extname(imageEntry.name).toLowerCase();
+      if (!IMAGE_EXTENSIONS.has(extension)) continue;
 
-      for (const imageEntry of imageEntries.filter((entry) => entry.isFile())) {
-        const extension = path.extname(imageEntry.name).toLowerCase();
-        if (!IMAGE_EXTENSIONS.has(extension)) continue;
+      const absolutePath = path.join(folderPath, imageEntry.name);
+      const stat = await fs.stat(absolutePath);
+      nextAllowedPaths.add(absolutePath);
+      images.push({
+        id: toId(absolutePath),
+        name: imageEntry.name,
+        absolutePath,
+        relativePath: path.relative(rootPath, absolutePath),
+        previewUrl: imagePreviewUrl(absolutePath),
+        sizeBytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+        mimeType: MIME_TYPES[extension] ?? "application/octet-stream"
+      });
+    }
 
-        const absolutePath = path.join(tilePath, imageEntry.name);
-        const stat = await fs.stat(absolutePath);
-        nextAllowedPaths.add(absolutePath);
-        images.push({
-          id: toId(absolutePath),
-          name: imageEntry.name,
-          absolutePath,
-          relativePath: path.relative(rootPath, absolutePath),
-          previewUrl: imagePreviewUrl(absolutePath),
-          sizeBytes: stat.size,
-          modifiedAt: stat.mtime.toISOString(),
-          mimeType: MIME_TYPES[extension] ?? "application/octet-stream"
-        });
-      }
+    if (images.length > 0) {
+      const relativePath = path.relative(rootPath, folderPath);
+      const parts = relativePath.split(path.sep).filter(Boolean);
+      const productCode = parts.at(-1) ?? path.basename(folderPath);
+      const category = parts.at(-2) ?? "";
+      images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      folders.push({
+        id: toId(folderPath),
+        name: productCode,
+        category,
+        productCode,
+        absolutePath: folderPath,
+        relativePath,
+        images
+      });
+    }
 
-      if (images.length > 0) {
-        images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-        folders.push({
-          id: toId(tilePath),
-          size: sizeEntry.name,
-          tileName: tileEntry.name,
-          absolutePath: tilePath,
-          relativePath: path.relative(rootPath, tilePath),
-          images
-        });
-      }
+    for (const directoryEntry of entries.filter((entry) => entry.isDirectory())) {
+      await walk(path.join(folderPath, directoryEntry.name));
     }
   }
 
-  folders.sort((a, b) => `${a.size}/${a.tileName}`.localeCompare(`${b.size}/${b.tileName}`));
+  await walk(rootPath);
+
+  folders.sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true }));
   allowedImagePaths = nextAllowedPaths;
 
   return {

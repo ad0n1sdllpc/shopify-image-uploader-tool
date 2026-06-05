@@ -9,7 +9,7 @@ let dbPromise: Promise<{ db: Database; dbPath: string }> | null = null;
 async function getDb() {
   if (!dbPromise) {
     dbPromise = (async () => {
-      const dbPath = path.resolve(process.cwd(), process.env.TILE_UPLOAD_DB_PATH || "./tile-uploader.db");
+      const dbPath = path.resolve(process.cwd(), process.env.IMAGE_UPLOAD_DB_PATH || "./image-uploader.db");
       const SQL = await initSqlJs();
       const db = fs.existsSync(dbPath) ? new SQL.Database(fs.readFileSync(dbPath)) : new SQL.Database();
       db.exec(`

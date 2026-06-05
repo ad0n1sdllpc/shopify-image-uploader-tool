@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo, useState } from "react";
+import { Copy, Download } from "lucide-react";
 import type { ProductMatch, ShopifyProduct } from "@/types";
 
 export default function ProductMatchTable({
@@ -23,15 +25,66 @@ export default function ProductMatchTable({
       {matchedRows.length > 0 ? <MatchTable matches={matchedRows} products={products} onManualMatch={onManualMatch} /> : null}
       {noMatches.length > 0 ? (
         <section className="space-y-2">
-          <div className="admin-card border-clay/25 bg-clay/5 p-4 dark:border-clay/30 dark:bg-clay/10">
-            <h2 className="text-sm font-semibold">No matches</h2>
-            <p className="text-xs admin-muted">{noMatches.length} folder(s) need manual product selection.</p>
-          </div>
+          <NoMatchesSummary noMatches={noMatches} />
           <MatchTable matches={noMatches} products={products} onManualMatch={onManualMatch} />
         </section>
       ) : null}
     </div>
   );
+}
+
+function NoMatchesSummary({ noMatches }: { noMatches: ProductMatch[] }) {
+  const [copied, setCopied] = useState(false);
+  const exportText = useMemo(() => noMatchExportText(noMatches), [noMatches]);
+
+  async function copyText() {
+    await navigator.clipboard.writeText(exportText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  function downloadText() {
+    const blob = new Blob([exportText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `no-match-products-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="admin-card border-clay/25 bg-clay/5 p-4 dark:border-clay/30 dark:bg-clay/10">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold">No matches</h2>
+          <p className="text-xs admin-muted">{noMatches.length} folder(s) need manual product selection.</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button type="button" onClick={copyText} className="admin-button text-xs" title="Copy no-match product folders">
+            <Copy className="h-3.5 w-3.5" />
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button type="button" onClick={downloadText} className="admin-button text-xs" title="Export no-match product folders">
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function noMatchExportText(noMatches: ProductMatch[]) {
+  const lines = [
+    "No matches",
+    `${noMatches.length} folder(s) need manual product selection.`,
+    "",
+    ...noMatches.map((match, index) => `${index + 1}. ${match.folder.relativePath || match.folder.name}`)
+  ];
+  return lines.join("\n");
 }
 
 function MatchTable({
@@ -63,7 +116,7 @@ function MatchTable({
           {matches.map((match) => (
             <tr key={match.folder.id} className="admin-table-row align-top">
               <td className="px-3 py-2">
-                <p className="font-medium">{match.folder.tileName}</p>
+                <p className="font-medium">{match.folder.name}</p>
                 <p className="text-xs admin-muted">{match.folder.relativePath}</p>
               </td>
               <td className="px-3 py-2">
