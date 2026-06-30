@@ -9,21 +9,30 @@ import type {
   ProductMigrationRegionalProduct,
   ProductMigrationRunResult,
   ProductMigrationScanResult,
-  RegionalPrefix
+  RegionalPrefix,
 } from "@/types";
 
 export const regionalPrefixes: RegionalPrefix[] = ["LUZ", "VIS", "MIN"];
 
-export const migrationLocationByPrefix: Record<RegionalPrefix, ProductMigrationLocationName> = {
+export const migrationLocationByPrefix: Record<
+  RegionalPrefix,
+  ProductMigrationLocationName
+> = {
   LUZ: "Lusterplus Inc.",
   VIS: "ARTEMISIA CEBU",
-  MIN: "ARTEMISIA DAVAO"
+  MIN: "ARTEMISIA DAVAO",
+};
+
+const migrationLocationIdByPrefix: Record<RegionalPrefix, string> = {
+  LUZ: "gid://shopify/Location/86389424402",
+  VIS: "gid://shopify/Location/101194629394",
+  MIN: "gid://shopify/Location/101194662162",
 };
 
 const regionAvailabilityByPrefix: Record<RegionalPrefix, string> = {
   LUZ: "Luzon",
   VIS: "Visayas",
-  MIN: "Mindanao"
+  MIN: "Mindanao",
 };
 
 const METAFIELD_KEYS = {
@@ -38,10 +47,14 @@ const METAFIELD_KEYS = {
   trafficRating: "custom.traffic_rating",
   applicationArea: "custom.application_area",
   regionAvailability: "custom.region_availability",
-  productDescription: "custom.product_description"
+  productDescription: "custom.product_description",
 } as const;
 
-type ShopifyUserError = { field?: string[] | null; message: string; code?: string | null };
+type ShopifyUserError = {
+  field?: string[] | null;
+  message: string;
+  code?: string | null;
+};
 
 type MigrationProductVariantNode = {
   id: string;
@@ -94,7 +107,11 @@ type MigrationProductNode = {
   productType: string;
   variants: { nodes: MigrationProductVariantNode[] };
   media: {
-    nodes: { id: string; image?: { url: string | null } | null; preview?: { image?: { url: string | null } | null } | null }[];
+    nodes: {
+      id: string;
+      image?: { url: string | null } | null;
+      preview?: { image?: { url: string | null } | null } | null;
+    }[];
   };
   images: { nodes: { url: string | null }[] };
 };
@@ -121,25 +138,46 @@ type ProductCreateResponse = {
         nodes: {
           id: string;
           price: string;
-          inventoryItem: { id: string; sku: string | null; tracked: boolean; requiresShipping: boolean };
+          inventoryItem: {
+            id: string;
+            sku: string | null;
+            tracked: boolean;
+            requiresShipping: boolean;
+          };
         }[];
       };
-      metafields: { nodes: { namespace: string; key: string; value: string; type: string }[] };
+      metafields: {
+        nodes: {
+          namespace: string;
+          key: string;
+          value: string;
+          type: string;
+        }[];
+      };
     } | null;
     userErrors: ShopifyUserError[];
   };
 };
 
 type MigrationProductsResponse = {
-  products: { nodes: MigrationProductNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+  products: {
+    nodes: MigrationProductNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
 };
 
 type MigrationLocationsResponse = {
-  locations: { nodes: { id: string; name: string }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+  locations: {
+    nodes: { id: string; name: string }[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
 };
 
 type MigrationProductIndexResponse = {
-  products: { nodes: MigrationProductIndexNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+  products: {
+    nodes: MigrationProductIndexNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
 };
 
 type MigrationProductSourceDetailsResponse = {
@@ -171,7 +209,9 @@ type MigrationProductDetailsResponse = {
         };
       }[];
     };
-    metafields: { nodes: { namespace: string; key: string; value: string; type: string }[] };
+    metafields: {
+      nodes: { namespace: string; key: string; value: string; type: string }[];
+    };
   } | null;
 };
 
@@ -225,6 +265,12 @@ const MIGRATION_SOURCE_PRODUCT_QUERY = `
             sku
             tracked
             requiresShipping
+            inventoryLevels(first: 100) {
+              nodes {
+                location { id name }
+                quantities(names: ["available"]) { name quantity }
+              }
+            }
           }
         }
       }
@@ -342,13 +388,10 @@ const INVENTORY_BULK_TOGGLE_MUTATION = `
 `;
 
 const INVENTORY_ADJUST_MUTATION = `
-  mutation AdjustUnifiedMigrationInventory($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
-    inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+  mutation SetUnifiedMigrationInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+    inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
       inventoryAdjustmentGroup {
-        createdAt
-        reason
-        referenceDocumentUri
-        changes { name delta }
+        id
       }
       userErrors { field message }
     }
@@ -392,18 +435,27 @@ export async function scanProductMigrations(): Promise<ProductMigrationScanResul
   const products = await fetchMigrationProducts([]);
   return {
     scannedAt: new Date().toISOString(),
-    ...buildProductMigrationScan(products)
+    ...buildProductMigrationScan(products),
   };
 }
 
-export async function migrateRegionalProducts(baseSkus: string[]): Promise<ProductMigrationRunResult[]> {
-  const normalizedBaseSkus = baseSkus.map((baseSku) => baseSku.trim().toUpperCase()).filter(Boolean);
+export async function migrateRegionalProducts(
+  baseSkus: string[],
+): Promise<ProductMigrationRunResult[]> {
+  const normalizedBaseSkus = baseSkus
+    .map((baseSku) => baseSku.trim().toUpperCase())
+    .filter(Boolean);
   if (normalizedBaseSkus.length === 0) return [];
 
   const products = await fetchMigrationProducts(normalizedBaseSkus);
   const locationsByName = await fetchLocationsByName();
   const scan = buildProductMigrationScan(products);
-  const candidatesBySku = new Map(scan.candidates.map((candidate) => [candidate.baseSku.toUpperCase(), candidate]));
+  const candidatesBySku = new Map(
+    scan.candidates.map((candidate) => [
+      candidate.baseSku.toUpperCase(),
+      candidate,
+    ]),
+  );
   const results: ProductMigrationRunResult[] = [];
 
   for (const baseSku of normalizedBaseSkus) {
@@ -418,7 +470,7 @@ export async function migrateRegionalProducts(baseSkus: string[]): Promise<Produ
         imagesAttached: 0,
         metafieldsPopulated: 0,
         originalProductGids: [],
-        error: "No complete LUZ/VIS/MIN product set was found for this SKU."
+        error: "No complete LUZ/VIS/MIN product set was found for this SKU.",
       });
       continue;
     }
@@ -429,7 +481,9 @@ export async function migrateRegionalProducts(baseSkus: string[]): Promise<Produ
   return results;
 }
 
-export function buildProductMigrationScan(products: MigrationProductNode[]): Omit<ProductMigrationScanResult, "scannedAt"> {
+export function buildProductMigrationScan(
+  products: MigrationProductNode[],
+): Omit<ProductMigrationScanResult, "scannedAt"> {
   const sourceProducts: MigrationSourceProduct[] = [];
   const existingUnifiedProductsBySku = new Map<string, string>();
 
@@ -437,17 +491,26 @@ export function buildProductMigrationScan(products: MigrationProductNode[]): Omi
     const regional = migrationSourceProduct(product);
     if (regional) sourceProducts.push(regional);
 
-    const unifiedSku = product.variants.nodes.find((variant) => {
-      const sku = variant.sku?.trim();
-      return sku && !regionalSkuIdentity(sku) && sku.length > 0;
-    })?.sku?.trim().toUpperCase();
+    const unifiedSku = product.variants.nodes
+      .find((variant) => {
+        const sku = variant.sku?.trim();
+        return sku && !regionalSkuIdentity(sku) && sku.length > 0;
+      })
+      ?.sku?.trim()
+      .toUpperCase();
     if (unifiedSku) existingUnifiedProductsBySku.set(unifiedSku, product.id);
   }
 
-  const grouped = new Map<string, Partial<Record<RegionalPrefix, MigrationSourceProduct[]>>>();
+  const grouped = new Map<
+    string,
+    Partial<Record<RegionalPrefix, MigrationSourceProduct[]>>
+  >();
   for (const product of sourceProducts) {
     const group = grouped.get(product.identity.baseSku) ?? {};
-    group[product.identity.prefix] = [...(group[product.identity.prefix] ?? []), product];
+    group[product.identity.prefix] = [
+      ...(group[product.identity.prefix] ?? []),
+      product,
+    ];
     grouped.set(product.identity.baseSku, group);
   }
 
@@ -455,34 +518,60 @@ export function buildProductMigrationScan(products: MigrationProductNode[]): Omi
   const issues: ProductMigrationIssue[] = [];
 
   for (const [baseSku, group] of grouped.entries()) {
-    const missingPrefixes = regionalPrefixes.filter((prefix) => !group[prefix]?.length);
-    const duplicatePrefixes = regionalPrefixes.filter((prefix) => (group[prefix]?.length ?? 0) > 1);
-    const regionalProducts = regionalPrefixes.flatMap((prefix) => (group[prefix] ?? []).map((product) => regionalProductSummary(product)));
+    const missingPrefixes = regionalPrefixes.filter(
+      (prefix) => !group[prefix]?.length,
+    );
+    const duplicatePrefixes = regionalPrefixes.filter(
+      (prefix) => (group[prefix]?.length ?? 0) > 1,
+    );
+    const regionalProducts = regionalPrefixes.flatMap((prefix) =>
+      (group[prefix] ?? []).map((product) => regionalProductSummary(product)),
+    );
 
     if (missingPrefixes.length || duplicatePrefixes.length) {
       issues.push({
         baseSku,
         reason: [
-          missingPrefixes.length ? `Missing ${missingPrefixes.join(", ")} product(s)` : "",
-          duplicatePrefixes.length ? `Duplicate ${duplicatePrefixes.join(", ")} product(s)` : ""
-        ].filter(Boolean).join("; "),
-        products: regionalProducts
+          missingPrefixes.length
+            ? `Missing ${missingPrefixes.join(", ")} product(s)`
+            : "",
+          duplicatePrefixes.length
+            ? `Duplicate ${duplicatePrefixes.join(", ")} product(s)`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("; "),
+        products: regionalProducts,
       });
       continue;
     }
 
-    const productsInOrder = regionalPrefixes.map((prefix) => group[prefix]?.[0]).filter((product): product is MigrationSourceProduct => Boolean(product));
-    const candidate = candidateFromSourceProducts(baseSku, productsInOrder, existingUnifiedProductsBySku.get(baseSku) ?? null);
+    const productsInOrder = regionalPrefixes
+      .map((prefix) => group[prefix]?.[0])
+      .filter((product): product is MigrationSourceProduct => Boolean(product));
+    const candidate = candidateFromSourceProducts(
+      baseSku,
+      productsInOrder,
+      existingUnifiedProductsBySku.get(baseSku) ?? null,
+    );
     candidates.push(candidate);
   }
 
   return {
-    candidates: candidates.sort((first, second) => first.baseSku.localeCompare(second.baseSku)),
-    issues: issues.sort((first, second) => first.baseSku.localeCompare(second.baseSku))
+    candidates: candidates.sort((first, second) =>
+      first.baseSku.localeCompare(second.baseSku),
+    ),
+    issues: issues.sort((first, second) =>
+      first.baseSku.localeCompare(second.baseSku),
+    ),
   };
 }
 
-export function extractMigrationMetafields(baseSku: string, descriptionHtml: string, tags: string[]): ProductMigrationMetafields {
+export function extractMigrationMetafields(
+  baseSku: string,
+  descriptionHtml: string,
+  tags: string[],
+): ProductMigrationMetafields {
   const productDescription = plainTextFromHtml(descriptionHtml);
   const searchableText = [productDescription, tags.join(" ")].join(" ");
 
@@ -497,8 +586,10 @@ export function extractMigrationMetafields(baseSku: string, descriptionHtml: str
     rectified: /\brectified\b/i.test(productDescription),
     trafficRating: extractTrafficRating(productDescription),
     applicationArea: extractApplicationArea(tags),
-    regionAvailability: regionalPrefixes.map((prefix) => regionAvailabilityByPrefix[prefix]),
-    productDescription
+    regionAvailability: regionalPrefixes.map(
+      (prefix) => regionAvailabilityByPrefix[prefix],
+    ),
+    productDescription,
   };
 }
 
@@ -513,15 +604,23 @@ export function plainTextFromHtml(descriptionHtml: string) {
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, "\"")
+    .replace(/&quot;/gi, '"')
     .replace(/&#39;/g, "'")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-async function migrateProductCandidate(candidate: ProductMigrationCandidate, locationsByName: Map<string, { id: string; name: string }>): Promise<ProductMigrationRunResult> {
-  const inventorySet = candidate.regionalProducts.map((product) => ({ locationName: product.locationName, quantity: product.quantity }));
-  const originalProductGids = candidate.regionalProducts.map((product) => product.sourceProductId);
+async function migrateProductCandidate(
+  candidate: ProductMigrationCandidate,
+  locationsByName: Map<string, { id: string; name: string }>,
+): Promise<ProductMigrationRunResult> {
+  const inventorySet = candidate.regionalProducts.map((product) => ({
+    locationName: product.locationName,
+    quantity: product.quantity,
+  }));
+  const originalProductGids = candidate.regionalProducts.map(
+    (product) => product.sourceProductId,
+  );
 
   if (candidate.existingUnifiedProductId) {
     return {
@@ -533,13 +632,16 @@ async function migrateProductCandidate(candidate: ProductMigrationCandidate, loc
       imagesAttached: 0,
       metafieldsPopulated: metafieldInputs(candidate.metafields).length,
       originalProductGids,
-      error: `Unified product already exists: ${candidate.existingUnifiedProductId}`
+      error: `Unified product already exists: ${candidate.existingUnifiedProductId}`,
     };
   }
 
   const missingLocations = candidate.regionalProducts
     .map((product) => product.locationName)
-    .filter((locationName) => !locationsByName.has(normalizeLocationName(locationName)));
+    .filter(
+      (locationName) =>
+        !locationsByName.has(normalizeLocationName(locationName)),
+    );
   if (missingLocations.length) {
     return {
       baseSku: candidate.baseSku,
@@ -550,7 +652,7 @@ async function migrateProductCandidate(candidate: ProductMigrationCandidate, loc
       imagesAttached: 0,
       metafieldsPopulated: metafieldInputs(candidate.metafields).length,
       originalProductGids,
-      error: `Missing Shopify location(s): ${Array.from(new Set(missingLocations)).join(", ")}`
+      error: `Missing Shopify location(s): ${Array.from(new Set(missingLocations)).join(", ")}`,
     };
   }
 
@@ -561,13 +663,27 @@ async function migrateProductCandidate(candidate: ProductMigrationCandidate, loc
     const created = await createDraftProduct(candidate, metafields);
     createdProductId = created.id;
     const variant = created.variants.nodes[0];
-    if (!variant) throw new Error("Shopify created the product without a default variant.");
+    if (!variant)
+      throw new Error("Shopify created the product without a default variant.");
 
-    const inventoryItemId = await updateDefaultVariant(created.id, variant.id, candidate);
-    await activateInventoryLocations(inventoryItemId, candidate, locationsByName);
-    await adjustInventoryFromZero(inventoryItemId, candidate, locationsByName);
+    const inventoryItemId = await updateDefaultVariant(
+      created.id,
+      variant.id,
+      candidate,
+    );
+    await activateInventoryLocations(
+      inventoryItemId,
+      candidate,
+      locationsByName,
+    );
+    await setUnifiedInventoryQuantities(created.id, inventoryItemId, candidate);
 
-    const verified = await verifyMigratedProduct(created.id, candidate, locationsByName, metafields.length);
+    const verified = await verifyMigratedProduct(
+      created.id,
+      candidate,
+      locationsByName,
+      metafields.length,
+    );
 
     return {
       baseSku: candidate.baseSku,
@@ -577,7 +693,7 @@ async function migrateProductCandidate(candidate: ProductMigrationCandidate, loc
       missingFields: candidate.missingFields,
       imagesAttached: verified.mediaCount,
       metafieldsPopulated: verified.metafieldCount,
-      originalProductGids
+      originalProductGids,
     };
   } catch (error) {
     return {
@@ -589,7 +705,7 @@ async function migrateProductCandidate(candidate: ProductMigrationCandidate, loc
       imagesAttached: 0,
       metafieldsPopulated: metafieldInputs(candidate.metafields).length,
       originalProductGids,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 }
@@ -604,7 +720,10 @@ async function fetchMigrationProducts(baseSkus?: string[]) {
     if (product) detailsById.set(product.id, product);
   }
 
-  return indexProducts.map((product) => detailsById.get(product.id) ?? productIndexToMinimalProduct(product));
+  return indexProducts.map(
+    (product) =>
+      detailsById.get(product.id) ?? productIndexToMinimalProduct(product),
+  );
 }
 
 async function fetchMigrationProductIndex() {
@@ -612,24 +731,41 @@ async function fetchMigrationProductIndex() {
   let cursor: string | null = null;
 
   do {
-    const data: MigrationProductIndexResponse = await shopifyGraphql<MigrationProductIndexResponse>(MIGRATION_PRODUCT_INDEX_QUERY, { cursor });
+    const data: MigrationProductIndexResponse =
+      await shopifyGraphql<MigrationProductIndexResponse>(
+        MIGRATION_PRODUCT_INDEX_QUERY,
+        { cursor },
+      );
     products.push(...data.products.nodes);
-    cursor = data.products.pageInfo.hasNextPage ? data.products.pageInfo.endCursor : null;
+    cursor = data.products.pageInfo.hasNextPage
+      ? data.products.pageInfo.endCursor
+      : null;
   } while (cursor);
 
   return products;
 }
 
 async function fetchMigrationProductDetails(productId: string) {
-  const data = await shopifyGraphql<MigrationProductSourceDetailsResponse>(MIGRATION_SOURCE_PRODUCT_QUERY, { id: productId });
+  const data = await shopifyGraphql<MigrationProductSourceDetailsResponse>(
+    MIGRATION_SOURCE_PRODUCT_QUERY,
+    { id: productId },
+  );
   return data.product;
 }
 
-function detailProductIdsForMigration(products: MigrationProductIndexNode[], baseSkus?: string[]) {
+function detailProductIdsForMigration(
+  products: MigrationProductIndexNode[],
+  baseSkus?: string[],
+) {
   if (!baseSkus || baseSkus.length === 0) return [];
 
-  const requestedBaseSkuSet = new Set(baseSkus.map((baseSku) => baseSku.trim().toUpperCase()));
-  const groups = new Map<string, Partial<Record<RegionalPrefix, MigrationProductIndexNode[]>>>();
+  const requestedBaseSkuSet = new Set(
+    baseSkus.map((baseSku) => baseSku.trim().toUpperCase()),
+  );
+  const groups = new Map<
+    string,
+    Partial<Record<RegionalPrefix, MigrationProductIndexNode[]>>
+  >();
 
   for (const product of products) {
     const source = migrationSourceIndexProduct(product);
@@ -637,13 +773,18 @@ function detailProductIdsForMigration(products: MigrationProductIndexNode[], bas
     if (!requestedBaseSkuSet.has(source.identity.baseSku)) continue;
 
     const group = groups.get(source.identity.baseSku) ?? {};
-    group[source.identity.prefix] = [...(group[source.identity.prefix] ?? []), product];
+    group[source.identity.prefix] = [
+      ...(group[source.identity.prefix] ?? []),
+      product,
+    ];
     groups.set(source.identity.baseSku, group);
   }
 
   const ids = new Set<string>();
   for (const group of groups.values()) {
-    const complete = regionalPrefixes.every((prefix) => (group[prefix]?.length ?? 0) === 1);
+    const complete = regionalPrefixes.every(
+      (prefix) => (group[prefix]?.length ?? 0) === 1,
+    );
     if (!complete) continue;
 
     for (const prefix of regionalPrefixes) {
@@ -655,7 +796,9 @@ function detailProductIdsForMigration(products: MigrationProductIndexNode[], bas
   return Array.from(ids);
 }
 
-function productIndexToMinimalProduct(product: MigrationProductIndexNode): MigrationProductNode {
+function productIndexToMinimalProduct(
+  product: MigrationProductIndexNode,
+): MigrationProductNode {
   return {
     id: product.id,
     title: product.title,
@@ -674,12 +817,12 @@ function productIndexToMinimalProduct(product: MigrationProductIndexNode): Migra
           sku: variant.inventoryItem.sku,
           tracked: variant.inventoryItem.tracked,
           requiresShipping: variant.inventoryItem.requiresShipping,
-          inventoryLevels: { nodes: [] }
-        }
-      }))
+          inventoryLevels: { nodes: [] },
+        },
+      })),
     },
     media: { nodes: [] },
-    images: { nodes: [] }
+    images: { nodes: [] },
   };
 }
 
@@ -688,42 +831,57 @@ async function fetchLocationsByName() {
   let cursor: string | null = null;
 
   do {
-    const data: MigrationLocationsResponse = await shopifyGraphql<MigrationLocationsResponse>(LOCATIONS_QUERY, { cursor });
+    const data: MigrationLocationsResponse =
+      await shopifyGraphql<MigrationLocationsResponse>(LOCATIONS_QUERY, {
+        cursor,
+      });
     for (const location of data.locations.nodes) {
       locations.set(normalizeLocationName(location.name), location);
     }
-    cursor = data.locations.pageInfo.hasNextPage ? data.locations.pageInfo.endCursor : null;
+    cursor = data.locations.pageInfo.hasNextPage
+      ? data.locations.pageInfo.endCursor
+      : null;
   } while (cursor);
 
   return locations;
 }
 
-function migrationSourceProduct(product: MigrationProductNode): MigrationSourceProduct | null {
+function migrationSourceProduct(
+  product: MigrationProductNode,
+): MigrationSourceProduct | null {
   for (const variant of product.variants.nodes) {
     const identity = regionalSkuIdentity(variant.sku);
     if (identity) return { ...product, identity, variant };
   }
 
-  const titleIdentity = regionalSkuIdentity(product.title) ?? regionalSkuIdentity(product.handle);
+  const titleIdentity =
+    regionalSkuIdentity(product.title) ?? regionalSkuIdentity(product.handle);
   const variant = product.variants.nodes[0];
-  if (titleIdentity && variant) return { ...product, identity: titleIdentity, variant };
+  if (titleIdentity && variant)
+    return { ...product, identity: titleIdentity, variant };
 
   return null;
 }
 
-function migrationSourceIndexProduct(product: MigrationProductIndexNode): { product: MigrationProductIndexNode; identity: RegionalProductIdentity } | null {
+function migrationSourceIndexProduct(product: MigrationProductIndexNode): {
+  product: MigrationProductIndexNode;
+  identity: RegionalProductIdentity;
+} | null {
   for (const variant of product.variants.nodes) {
     const identity = regionalSkuIdentity(variant.sku);
     if (identity) return { product, identity };
   }
 
-  const titleIdentity = regionalSkuIdentity(product.title) ?? regionalSkuIdentity(product.handle);
+  const titleIdentity =
+    regionalSkuIdentity(product.title) ?? regionalSkuIdentity(product.handle);
   if (titleIdentity) return { product, identity: titleIdentity };
 
   return null;
 }
 
-function regionalSkuIdentity(value: string | null | undefined): RegionalProductIdentity | null {
+function regionalSkuIdentity(
+  value: string | null | undefined,
+): RegionalProductIdentity | null {
   const normalized = value?.trim();
   if (!normalized) return null;
 
@@ -733,11 +891,15 @@ function regionalSkuIdentity(value: string | null | undefined): RegionalProductI
   return {
     prefix: match[1].toUpperCase() as RegionalPrefix,
     baseSku: match[2].trim().toUpperCase(),
-    sku: `${match[1].toUpperCase()}-${match[2].trim().toUpperCase()}`
+    sku: `${match[1].toUpperCase()}-${match[2].trim().toUpperCase()}`,
   };
 }
 
-function candidateFromSourceProducts(baseSku: string, products: MigrationSourceProduct[], existingUnifiedProductId: string | null): ProductMigrationCandidate {
+function candidateFromSourceProducts(
+  baseSku: string,
+  products: MigrationSourceProduct[],
+  existingUnifiedProductId: string | null,
+): ProductMigrationCandidate {
   const canonicalProduct = products[0];
   const descriptionHtml = canonicalProduct.descriptionHtml ?? "";
   const tags = canonicalProduct.tags ?? [];
@@ -745,7 +907,11 @@ function candidateFromSourceProducts(baseSku: string, products: MigrationSourceP
   const price = canonicalProduct.variant.price;
   const metafields = extractMigrationMetafields(baseSku, descriptionHtml, tags);
   const missingFields = missingMetafieldNames(metafields);
-  const manualReviewFields = collectManualReviewFields(products, missingFields, existingUnifiedProductId);
+  const manualReviewFields = collectManualReviewFields(
+    products,
+    missingFields,
+    existingUnifiedProductId,
+  );
 
   return {
     baseSku,
@@ -755,11 +921,13 @@ function candidateFromSourceProducts(baseSku: string, products: MigrationSourceP
     tags,
     productType,
     imageUrls: candidateImageUrls(products),
-    regionalProducts: products.map((product) => regionalProductSummary(product)),
+    regionalProducts: products.map((product) =>
+      regionalProductSummary(product),
+    ),
     metafields,
     missingFields,
     manualReviewFields,
-    existingUnifiedProductId
+    existingUnifiedProductId,
   };
 }
 
@@ -769,7 +937,9 @@ function candidateImageUrls(products: MigrationSourceProduct[]) {
   return uniqueImageUrls(products);
 }
 
-function regionalProductSummary(product: MigrationSourceProduct): ProductMigrationRegionalProduct {
+function regionalProductSummary(
+  product: MigrationSourceProduct,
+): ProductMigrationRegionalProduct {
   const locationName = migrationLocationByPrefix[product.identity.prefix];
   return {
     prefix: product.identity.prefix,
@@ -777,38 +947,71 @@ function regionalProductSummary(product: MigrationSourceProduct): ProductMigrati
     sourceTitle: product.title,
     sku: product.identity.sku,
     locationName,
-    quantity: availableQuantity(product.variant, locationName)
+    quantity: availableQuantity(product.variant, locationName),
   };
 }
 
-function availableQuantity(variant: MigrationProductVariantNode, locationName: ProductMigrationLocationName) {
-  const matchingLevel = variant.inventoryItem.inventoryLevels?.nodes.find((level) => normalizeLocationName(level.location.name) === normalizeLocationName(locationName));
-  const matchingQuantity = matchingLevel?.quantities.find((quantity) => quantity.name === "available")?.quantity;
+function availableQuantity(
+  variant: MigrationProductVariantNode,
+  locationName: ProductMigrationLocationName,
+) {
+  const matchingLevel = variant.inventoryItem.inventoryLevels?.nodes.find(
+    (level) =>
+      normalizeLocationName(level.location.name) ===
+      normalizeLocationName(locationName),
+  );
+  const matchingQuantity = matchingLevel?.quantities.find(
+    (quantity) => quantity.name === "available",
+  )?.quantity;
   return matchingQuantity ?? variant.inventoryQuantity ?? 0;
 }
 
 function uniqueImageUrls(products: MigrationSourceProduct[]) {
   const urls = products.flatMap((product) => {
     const fallbackImageUrls = product.images.nodes.map((image) => image.url);
-    return product.media.nodes.map((media, index) => media.image?.url ?? media.preview?.image?.url ?? fallbackImageUrls[index] ?? null);
+    return product.media.nodes.map(
+      (media, index) =>
+        media.image?.url ??
+        media.preview?.image?.url ??
+        fallbackImageUrls[index] ??
+        null,
+    );
   });
 
   return Array.from(new Set(urls.filter((url): url is string => Boolean(url))));
 }
 
-function collectManualReviewFields(products: MigrationSourceProduct[], missingFields: string[], existingUnifiedProductId: string | null) {
+function collectManualReviewFields(
+  products: MigrationSourceProduct[],
+  missingFields: string[],
+  existingUnifiedProductId: string | null,
+) {
   const fields = new Set(missingFields);
   if (existingUnifiedProductId) fields.add("existing_unified_product");
-  if (new Set(products.map((product) => product.variant.price)).size > 1) fields.add("price_mismatch");
-  if (new Set(products.map((product) => product.productType)).size > 1) fields.add("product_type_mismatch");
-  if (new Set(products.map((product) => normalizeTagSet(product.tags))).size > 1) fields.add("tag_mismatch");
-  if (new Set(products.map((product) => plainTextFromHtml(product.descriptionHtml))).size > 1) fields.add("description_mismatch");
-  if (products.every((product) => uniqueImageUrls([product]).length === 0)) fields.add("images");
+  if (new Set(products.map((product) => product.variant.price)).size > 1)
+    fields.add("price_mismatch");
+  if (new Set(products.map((product) => product.productType)).size > 1)
+    fields.add("product_type_mismatch");
+  if (
+    new Set(products.map((product) => normalizeTagSet(product.tags))).size > 1
+  )
+    fields.add("tag_mismatch");
+  if (
+    new Set(
+      products.map((product) => plainTextFromHtml(product.descriptionHtml)),
+    ).size > 1
+  )
+    fields.add("description_mismatch");
+  if (products.every((product) => uniqueImageUrls([product]).length === 0))
+    fields.add("images");
   return Array.from(fields);
 }
 
 function normalizeTagSet(tags: string[]) {
-  return [...tags].map((tag) => tag.trim().toLowerCase()).sort().join("|");
+  return [...tags]
+    .map((tag) => tag.trim().toLowerCase())
+    .sort()
+    .join("|");
 }
 
 function missingMetafieldNames(metafields: ProductMigrationMetafields) {
@@ -821,31 +1024,99 @@ function missingMetafieldNames(metafields: ProductMigrationMetafields) {
   if (metafields.thicknessMm === null) missing.push(METAFIELD_KEYS.thicknessMm);
   if (!metafields.trafficRating) missing.push(METAFIELD_KEYS.trafficRating);
   if (!metafields.applicationArea) missing.push(METAFIELD_KEYS.applicationArea);
-  if (!metafields.productDescription) missing.push(METAFIELD_KEYS.productDescription);
+  if (!metafields.productDescription)
+    missing.push(METAFIELD_KEYS.productDescription);
   return missing;
 }
 
 export function metafieldInputs(metafields: ProductMigrationMetafields) {
   const inputs = [
     metafieldInput("item_code", "single_line_text_field", metafields.itemCode),
-    metafields.tileSize ? metafieldInput("tile_size", "single_line_text_field", metafields.tileSize) : null,
-    metafields.surfaceFinish ? metafieldInput("surface_finish", "list.single_line_text_field", listMetafieldValue([metafields.surfaceFinish])) : null,
-    metafields.materialType ? metafieldInput("material_type", "list.single_line_text_field", listMetafieldValue([metafields.materialType])) : null,
-    metafields.printTechnology ? metafieldInput("print_technology", "list.single_line_text_field", listMetafieldValue([metafields.printTechnology])) : null,
-    metafields.waterAbsorption ? metafieldInput("water_absorption", "single_line_text_field", metafields.waterAbsorption) : null,
-    metafields.thicknessMm !== null ? metafieldInput("thickness_mm", "number_decimal", String(metafields.thicknessMm)) : null,
+    metafields.tileSize
+      ? metafieldInput(
+          "tile_size",
+          "single_line_text_field",
+          metafields.tileSize,
+        )
+      : null,
+    metafields.surfaceFinish
+      ? metafieldInput(
+          "surface_finish",
+          "list.single_line_text_field",
+          listMetafieldValue([metafields.surfaceFinish]),
+        )
+      : null,
+    metafields.materialType
+      ? metafieldInput(
+          "material_type",
+          "list.single_line_text_field",
+          listMetafieldValue([metafields.materialType]),
+        )
+      : null,
+    metafields.printTechnology
+      ? metafieldInput(
+          "print_technology",
+          "list.single_line_text_field",
+          listMetafieldValue([metafields.printTechnology]),
+        )
+      : null,
+    metafields.waterAbsorption
+      ? metafieldInput(
+          "water_absorption",
+          "single_line_text_field",
+          metafields.waterAbsorption,
+        )
+      : null,
+    metafields.thicknessMm !== null
+      ? metafieldInput(
+          "thickness_mm",
+          "number_decimal",
+          String(metafields.thicknessMm),
+        )
+      : null,
     metafieldInput("rectified", "boolean", String(metafields.rectified)),
-    metafields.trafficRating ? metafieldInput("traffic_rating", "list.single_line_text_field", listMetafieldValue([metafields.trafficRating])) : null,
-    metafields.applicationArea ? metafieldInput("application_area", "list.single_line_text_field", listMetafieldValue(metafields.applicationArea.split(";").map((area) => area.trim()).filter(Boolean))) : null,
-    metafieldInput("region_availability", "list.single_line_text_field", listMetafieldValue(metafields.regionAvailability)),
-    metafields.productDescription ? metafieldInput("product_description", "multi_line_text_field", metafields.productDescription) : null
+    metafields.trafficRating
+      ? metafieldInput(
+          "traffic_rating",
+          "list.single_line_text_field",
+          listMetafieldValue([metafields.trafficRating]),
+        )
+      : null,
+    metafields.applicationArea
+      ? metafieldInput(
+          "application_area",
+          "list.single_line_text_field",
+          listMetafieldValue(
+            metafields.applicationArea
+              .split(";")
+              .map((area) => area.trim())
+              .filter(Boolean),
+          ),
+        )
+      : null,
+    metafieldInput(
+      "region_availability",
+      "list.single_line_text_field",
+      listMetafieldValue(metafields.regionAvailability),
+    ),
+    metafields.productDescription
+      ? metafieldInput(
+          "product_description",
+          "multi_line_text_field",
+          metafields.productDescription,
+        )
+      : null,
   ];
 
-  return inputs.filter((input): input is NonNullable<typeof input> => Boolean(input));
+  return inputs.filter((input): input is NonNullable<typeof input> =>
+    Boolean(input),
+  );
 }
 
 function listMetafieldValue(values: string[]) {
-  return JSON.stringify(Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))));
+  return JSON.stringify(
+    Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))),
+  );
 }
 
 function metafieldInput(key: string, type: string, value: string) {
@@ -853,26 +1124,32 @@ function metafieldInput(key: string, type: string, value: string) {
     namespace: "custom",
     key,
     type,
-    value
+    value,
   };
 }
 
-async function createDraftProduct(candidate: ProductMigrationCandidate, metafields: ReturnType<typeof metafieldInputs>) {
-  const data = await shopifyGraphql<ProductCreateResponse>(PRODUCT_CREATE_MUTATION, {
-    product: {
-      title: candidate.title,
-      status: "DRAFT",
-      descriptionHtml: candidate.descriptionHtml,
-      productType: candidate.productType,
-      tags: candidate.tags,
-      metafields
+async function createDraftProduct(
+  candidate: ProductMigrationCandidate,
+  metafields: ReturnType<typeof metafieldInputs>,
+) {
+  const data = await shopifyGraphql<ProductCreateResponse>(
+    PRODUCT_CREATE_MUTATION,
+    {
+      product: {
+        title: candidate.title,
+        status: "DRAFT",
+        descriptionHtml: candidate.descriptionHtml,
+        productType: candidate.productType,
+        tags: candidate.tags,
+        metafields,
+      },
+      media: candidate.imageUrls.map((url) => ({
+        mediaContentType: "IMAGE",
+        originalSource: url,
+        alt: candidate.title,
+      })),
     },
-    media: candidate.imageUrls.map((url) => ({
-      mediaContentType: "IMAGE",
-      originalSource: url,
-      alt: candidate.title
-    }))
-  });
+  );
 
   throwIfUserErrors(data.productCreate.userErrors);
   const product = data.productCreate.product;
@@ -880,10 +1157,22 @@ async function createDraftProduct(candidate: ProductMigrationCandidate, metafiel
   return product;
 }
 
-async function updateDefaultVariant(productId: string, variantId: string, candidate: ProductMigrationCandidate) {
+async function updateDefaultVariant(
+  productId: string,
+  variantId: string,
+  candidate: ProductMigrationCandidate,
+) {
   const data = await shopifyGraphql<{
     productVariantsBulkUpdate: {
-      productVariants: { id: string; inventoryItem: { id: string; sku: string | null; tracked: boolean; requiresShipping: boolean } }[];
+      productVariants: {
+        id: string;
+        inventoryItem: {
+          id: string;
+          sku: string | null;
+          tracked: boolean;
+          requiresShipping: boolean;
+        };
+      }[];
       userErrors: ShopifyUserError[];
     };
   }>(VARIANT_UPDATE_MUTATION, {
@@ -895,109 +1184,181 @@ async function updateDefaultVariant(productId: string, variantId: string, candid
         inventoryItem: {
           sku: candidate.baseSku,
           tracked: true,
-          requiresShipping: true
+          requiresShipping: true,
         },
-        inventoryPolicy: "DENY"
-      }
-    ]
+        inventoryPolicy: "DENY",
+      },
+    ],
   });
 
   throwIfUserErrors(data.productVariantsBulkUpdate.userErrors);
   const updatedVariant = data.productVariantsBulkUpdate.productVariants[0];
-  if (!updatedVariant?.inventoryItem.id) throw new Error("Shopify did not return the unified variant inventory item.");
+  if (!updatedVariant?.inventoryItem.id)
+    throw new Error(
+      "Shopify did not return the unified variant inventory item.",
+    );
   return updatedVariant.inventoryItem.id;
 }
 
-async function activateInventoryLocations(inventoryItemId: string, candidate: ProductMigrationCandidate, locationsByName: Map<string, { id: string; name: string }>) {
-  const inventoryItemUpdates = candidate.regionalProducts.map((product) => ({
-    locationId: locationsByName.get(normalizeLocationName(product.locationName))?.id,
-    activate: true
-  })).filter((input): input is { locationId: string; activate: boolean } => Boolean(input.locationId));
+async function activateInventoryLocations(
+  inventoryItemId: string,
+  candidate: ProductMigrationCandidate,
+  locationsByName: Map<string, { id: string; name: string }>,
+) {
+  const inventoryItemUpdates = candidate.regionalProducts
+    .map((product) => ({
+      locationId: locationsByName.get(
+        normalizeLocationName(product.locationName),
+      )?.id,
+      activate: true,
+    }))
+    .filter((input): input is { locationId: string; activate: boolean } =>
+      Boolean(input.locationId),
+    );
 
   const data = await shopifyGraphql<{
     inventoryBulkToggleActivation: { userErrors: ShopifyUserError[] };
   }>(INVENTORY_BULK_TOGGLE_MUTATION, {
     inventoryItemId,
-    inventoryItemUpdates
+    inventoryItemUpdates,
   });
 
-  throwIfUserErrors(data.inventoryBulkToggleActivation.userErrors.filter((error) => !isIgnorableInventoryActivationError(error)));
+  throwIfUserErrors(
+    data.inventoryBulkToggleActivation.userErrors.filter(
+      (error) => !isIgnorableInventoryActivationError(error),
+    ),
+  );
 }
 
-async function adjustInventoryFromZero(inventoryItemId: string, candidate: ProductMigrationCandidate, locationsByName: Map<string, { id: string; name: string }>) {
-  const changes = candidate.regionalProducts
-    .filter((product) => product.quantity !== 0)
-    .map((product) => ({
-      inventoryItemId,
-      locationId: locationsByName.get(normalizeLocationName(product.locationName))?.id,
-      delta: product.quantity
-    }))
-    .filter((input): input is { inventoryItemId: string; locationId: string; delta: number } => Boolean(input.locationId));
-
-  if (changes.length === 0) return;
+async function setUnifiedInventoryQuantities(
+  productId: string,
+  inventoryItemId: string,
+  candidate: ProductMigrationCandidate,
+) {
+  const quantities = buildUnifiedInventoryQuantities(
+    inventoryItemId,
+    candidate,
+  );
+  if (quantities.length === 0) return;
 
   const data = await shopifyGraphql<{
-    inventoryAdjustQuantities: { userErrors: ShopifyUserError[] };
+    inventorySetQuantities: { userErrors: ShopifyUserError[] };
   }>(INVENTORY_ADJUST_MUTATION, {
     input: {
       name: "available",
       reason: "correction",
-      referenceDocumentUri: `product-migration://${candidate.baseSku}`,
-      changes
+      quantities,
     },
-    idempotencyKey: crypto.randomUUID()
+    idempotencyKey: crypto.randomUUID(),
   });
 
-  throwIfUserErrors(data.inventoryAdjustQuantities.userErrors);
+  throwIfUserErrors(data.inventorySetQuantities.userErrors);
 }
 
-async function verifyMigratedProduct(productId: string, candidate: ProductMigrationCandidate, locationsByName: Map<string, { id: string; name: string }>, expectedMetafieldCount: number) {
-  const data = await shopifyGraphql<MigrationProductDetailsResponse>(PRODUCT_DETAILS_QUERY, { id: productId });
+export function buildUnifiedInventoryQuantities(
+  inventoryItemId: string,
+  candidate: ProductMigrationCandidate,
+) {
+  return candidate.regionalProducts
+    .map((product) => ({
+      inventoryItemId,
+      locationId: migrationLocationIdByPrefix[product.prefix],
+      quantity: product.quantity,
+      changeFromQuantity: null,
+    }))
+    .filter(
+      (input) =>
+        typeof input.locationId === "string" && input.locationId.length > 0,
+    );
+}
+
+async function verifyMigratedProduct(
+  productId: string,
+  candidate: ProductMigrationCandidate,
+  locationsByName: Map<string, { id: string; name: string }>,
+  expectedMetafieldCount: number,
+) {
+  const data = await shopifyGraphql<MigrationProductDetailsResponse>(
+    PRODUCT_DETAILS_QUERY,
+    { id: productId },
+  );
   const product = data.product;
   if (!product) throw new Error("Could not verify the created product.");
-  if (product.title !== candidate.title) throw new Error(`Verification failed: title is ${product.title}, expected ${candidate.title}.`);
-  if (product.status !== "DRAFT") throw new Error(`Verification failed: status is ${product.status}, expected DRAFT.`);
+  if (product.title !== candidate.title)
+    throw new Error(
+      `Verification failed: title is ${product.title}, expected ${candidate.title}.`,
+    );
+  if (product.status !== "DRAFT")
+    throw new Error(
+      `Verification failed: status is ${product.status}, expected DRAFT.`,
+    );
 
   const variant = product.variants.nodes[0];
-  if (!variant) throw new Error("Verification failed: created product has no variant.");
-  if ((variant.sku ?? variant.inventoryItem.sku) !== candidate.baseSku) throw new Error("Verification failed: unified SKU was not set.");
-  if (!variant.inventoryItem.tracked) throw new Error("Verification failed: inventory tracking is disabled.");
-  if (!variant.inventoryItem.requiresShipping) throw new Error("Verification failed: requires shipping is disabled.");
+  if (!variant)
+    throw new Error("Verification failed: created product has no variant.");
+  if ((variant.sku ?? variant.inventoryItem.sku) !== candidate.baseSku)
+    throw new Error("Verification failed: unified SKU was not set.");
+  if (!variant.inventoryItem.tracked)
+    throw new Error("Verification failed: inventory tracking is disabled.");
+  if (!variant.inventoryItem.requiresShipping)
+    throw new Error("Verification failed: requires shipping is disabled.");
 
   for (const regionalProduct of candidate.regionalProducts) {
-    const expectedLocation = locationsByName.get(normalizeLocationName(regionalProduct.locationName));
-    const level = variant.inventoryItem.inventoryLevels.nodes.find((node) => node.location.id === expectedLocation?.id);
-    const available = level?.quantities.find((quantity) => quantity.name === "available")?.quantity;
+    const expectedLocation = locationsByName.get(
+      normalizeLocationName(regionalProduct.locationName),
+    );
+    const level = variant.inventoryItem.inventoryLevels.nodes.find(
+      (node) => node.location.id === expectedLocation?.id,
+    );
+    const available = level?.quantities.find(
+      (quantity) => quantity.name === "available",
+    )?.quantity;
     if (available !== regionalProduct.quantity) {
-      throw new Error(`Verification failed: ${regionalProduct.locationName} inventory is ${available ?? "missing"}, expected ${regionalProduct.quantity}.`);
+      throw new Error(
+        `Verification failed: ${regionalProduct.locationName} inventory is ${available ?? "missing"}, expected ${regionalProduct.quantity}.`,
+      );
     }
   }
 
-  const metafieldCount = product.metafields.nodes.filter((metafield) => metafield.namespace === "custom").length;
-  if (metafieldCount < expectedMetafieldCount) throw new Error(`Verification failed: ${metafieldCount} metafield(s) found, expected ${expectedMetafieldCount}.`);
-  if (product.mediaCount.count < candidate.imageUrls.length) throw new Error(`Verification failed: ${product.mediaCount.count} image(s) attached, expected ${candidate.imageUrls.length}.`);
+  const metafieldCount = product.metafields.nodes.filter(
+    (metafield) => metafield.namespace === "custom",
+  ).length;
+  if (metafieldCount < expectedMetafieldCount)
+    throw new Error(
+      `Verification failed: ${metafieldCount} metafield(s) found, expected ${expectedMetafieldCount}.`,
+    );
+  if (product.mediaCount.count < candidate.imageUrls.length)
+    throw new Error(
+      `Verification failed: ${product.mediaCount.count} image(s) attached, expected ${candidate.imageUrls.length}.`,
+    );
 
   return {
     mediaCount: product.mediaCount.count,
-    metafieldCount
+    metafieldCount,
   };
 }
 
 function throwIfUserErrors(errors: ShopifyUserError[]) {
   if (!errors.length) return;
-  throw new Error(errors.map((error) => {
-    const field = error.field?.length ? `${error.field.join(".")}: ` : "";
-    const code = error.code ? ` (${error.code})` : "";
-    return `${field}${error.message}${code}`;
-  }).join("; "));
+  throw new Error(
+    errors
+      .map((error) => {
+        const field = error.field?.length ? `${error.field.join(".")}: ` : "";
+        const code = error.code ? ` (${error.code})` : "";
+        return `${field}${error.message}${code}`;
+      })
+      .join("; "),
+  );
 }
 
 export function isIgnorableInventoryActivationError(error: ShopifyUserError) {
   const code = error.code?.trim().toUpperCase();
   if (code && /ALREADY|ACTIVE|STOCK/.test(code)) return true;
 
-  return /\balready\b.*\b(active|activated|stocked)\b/i.test(error.message)
-    || /\b(active|activated|stocked)\b.*\balready\b/i.test(error.message);
+  return (
+    /\balready\b.*\b(active|activated|stocked)\b/i.test(error.message) ||
+    /\b(active|activated|stocked)\b.*\balready\b/i.test(error.message)
+  );
 }
 
 function extractTileSize(tags: string[], text: string) {
@@ -1022,13 +1383,27 @@ function extractSurfaceFinish(tags: string[], text: string) {
     "Rustic",
     "Satin",
     "Lappato",
-    "Honed"
+    "Honed",
   ];
-  return extractKnownValue(tags, finishes) ?? extractKnownValue([text], finishes);
+  return (
+    extractKnownValue(tags, finishes) ?? extractKnownValue([text], finishes)
+  );
 }
 
 function extractMaterialType(text: string) {
-  return extractKnownValue([text], ["Porcelain", "Ceramic", "Homogeneous", "Vinyl", "Granite", "Marble", "Stoneware", "Terracotta"]);
+  return extractKnownValue(
+    [text],
+    [
+      "Porcelain",
+      "Ceramic",
+      "Homogeneous",
+      "Vinyl",
+      "Granite",
+      "Marble",
+      "Stoneware",
+      "Terracotta",
+    ],
+  );
 }
 
 function extractPrintTechnology(text: string) {
@@ -1037,7 +1412,9 @@ function extractPrintTechnology(text: string) {
 }
 
 function extractWaterAbsorption(text: string) {
-  const explicit = text.match(/water\s*absorption[^A-Za-z0-9<>≤=]*(E?\s*[<≤=]\s*\d+(?:\.\d+)?\s*%)/i);
+  const explicit = text.match(
+    /water\s*absorption[^A-Za-z0-9<>≤=]*(E?\s*[<≤=]\s*\d+(?:\.\d+)?\s*%)/i,
+  );
   if (explicit) return normalizeWaterAbsorption(explicit[1]);
 
   const compact = text.match(/\bE\s*[<≤=]\s*\d+(?:\.\d+)?\s*%/i);
@@ -1056,21 +1433,40 @@ function extractThicknessMm(text: string) {
 }
 
 function extractTrafficRating(text: string) {
-  const explicit = text.match(/traffic\s*(?:rating|grade)?[^A-Za-z]*(light|moderate|medium|heavy|commercial|residential)/i);
+  const explicit = text.match(
+    /traffic\s*(?:rating|grade)?[^A-Za-z]*(light|moderate|medium|heavy|commercial|residential)/i,
+  );
   if (explicit) return titleCase(explicit[1]);
-  return extractKnownValue([text], ["Light", "Moderate", "Medium", "Heavy", "Commercial", "Residential"]);
+  return extractKnownValue(
+    [text],
+    ["Light", "Moderate", "Medium", "Heavy", "Commercial", "Residential"],
+  );
 }
 
 function extractApplicationArea(tags: string[]) {
-  const areas = ["Floor", "Wall", "Indoor", "Outdoor", "Bathroom", "Kitchen", "Commercial", "Residential"];
-  const found = areas.filter((area) => tags.some((tag) => new RegExp(`\\b${escapeRegExp(area)}\\b`, "i").test(tag)));
+  const areas = [
+    "Floor",
+    "Wall",
+    "Indoor",
+    "Outdoor",
+    "Bathroom",
+    "Kitchen",
+    "Commercial",
+    "Residential",
+  ];
+  const found = areas.filter((area) =>
+    tags.some((tag) =>
+      new RegExp(`\\b${escapeRegExp(area)}\\b`, "i").test(tag),
+    ),
+  );
   return found.length ? found.join("; ") : null;
 }
 
 function extractKnownValue(sources: string[], values: string[]) {
   for (const source of sources) {
     for (const value of values) {
-      if (new RegExp(`\\b${escapeRegExp(value)}\\b`, "i").test(source)) return value === "Matt" ? "Matte" : value;
+      if (new RegExp(`\\b${escapeRegExp(value)}\\b`, "i").test(source))
+        return value === "Matt" ? "Matte" : value;
     }
   }
 
@@ -1078,7 +1474,9 @@ function extractKnownValue(sources: string[], values: string[]) {
 }
 
 function titleCase(value: string) {
-  return value.toLowerCase().replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+  return value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
 function normalizeLocationName(value: string) {
