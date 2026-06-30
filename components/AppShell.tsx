@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Download, FolderSearch, History, Images, LayoutDashboard, RefreshCw, Shuffle, Trash2, UploadCloud, Upload } from "lucide-react";
+import { CheckCircle2, Download, FolderSearch, History, Images, LayoutDashboard, PackagePlus, RefreshCw, Shuffle, Trash2, UploadCloud, Upload } from "lucide-react";
 import ImageSelector from "@/components/ImageSelector";
 import MediaManager from "@/components/MediaManager";
 import ProductMatchTable from "@/components/ProductMatchTable";
@@ -14,9 +14,9 @@ import { matchedMediaProducts } from "@/lib/mediaManager";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import { DEFAULT_REVIEW_BATCH_GROUP_SIZE, FALLBACK_SECONDS_PER_PRODUCT, batchStatusForSelection, createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob, type ReviewBatchPlan } from "@/lib/reviewBatches";
 import { activeSelections, includedSelections, keepCurrentExcludedProductIds, matchedProductIds } from "@/lib/reviewSelections";
-import type { ImageFolder, MediaDeleteRequestItem, MediaDeleteResult, ProductMatch, ScanResult, ShopifyProduct, UploadJob, UploadMode, UploadSelection } from "@/types";
+import type { ImageFolder, MediaDeleteRequestItem, MediaDeleteResult, ProductMatch, ProductMigrationCandidate, ProductMigrationRunResult, ProductMigrationScanResult, ScanResult, ShopifyProduct, UploadJob, UploadMode, UploadSelection } from "@/types";
 
-type PageKey = "dashboard" | "scan" | "matching" | "media" | "selector" | "review" | "history";
+type PageKey = "dashboard" | "scan" | "matching" | "media" | "selector" | "review" | "migration" | "history";
 
 const navItems: { key: PageKey; href: string; label: string; icon: React.ElementType }[] = [
   { key: "dashboard", href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -25,6 +25,7 @@ const navItems: { key: PageKey; href: string; label: string; icon: React.Element
   { key: "media", href: "/media", label: "Media Manager", icon: Trash2 },
   { key: "selector", href: "/selector", label: "Image Selector", icon: Images },
   { key: "review", href: "/review", label: "Review Upload", icon: UploadCloud },
+  { key: "migration", href: "/migration", label: "Product Migration", icon: PackagePlus },
   { key: "history", href: "/history", label: "History", icon: History }
 ];
 
@@ -262,6 +263,9 @@ export default function AppShell({ page }: { page: PageKey }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [history, setHistory] = useState<UploadJob[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [migrationScan, setMigrationScan] = useState<ProductMigrationScanResult | null>(null);
+  const [migrationSelectedSkus, setMigrationSelectedSkus] = useState<string[]>([]);
+  const [migrationResults, setMigrationResults] = useState<ProductMigrationRunResult[]>([]);
   const checkpointInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -312,6 +316,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     media: { href: "/selector", label: "Select images" },
     selector: { href: "/review", label: "Review upload" },
     review: { href: "/history", label: "View history" },
+    migration: { href: "/migration", label: "Migration tab" },
     history: { href: "/review", label: "Back to review" }
   }[page];
 
@@ -417,6 +422,73 @@ export default function AppShell({ page }: { page: PageKey }) {
       const productsResponse = await request<{ products: ShopifyProduct[] }>("/api/products");
       setStore((current) => storeWithRefreshedProducts(current, productsResponse.products));
       setNotice(`${productsResponse.products.length} Shopify product(s) refreshed.`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function scanProductMigrationCandidates() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await request<{ scan: ProductMigrationScanResult }>("/api/migrations/products");
+      const selectableSkus = response.scan.candidates
+        .filter((candidate) => !candidate.existingUnifiedProductId)
+        .map((candidate) => candidate.baseSku);
+      setMigrationScan(response.scan);
+      setMigrationSelectedSkus([]);
+      setMigrationResults([]);
+      setNotice(`${response.scan.candidates.length} complete regional set(s) found. ${selectableSkus.length} can be selected for migration. ${response.scan.issues.length} set(s) need manual review.`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setMigrationSkuSelected(baseSku: string, selected: boolean) {
+    setMigrationSelectedSkus((current) => {
+      if (selected) return Array.from(new Set([...current, baseSku]));
+      return current.filter((item) => item !== baseSku);
+    });
+  }
+
+  function setAllMigrationSkus(selected: boolean) {
+    const selectableSkus = migrationScan?.candidates
+      .filter((candidate) => !candidate.existingUnifiedProductId)
+      .map((candidate) => candidate.baseSku) ?? [];
+    setMigrationSelectedSkus(selected ? selectableSkus : []);
+  }
+
+  async function runProductMigrationCandidates() {
+    if (migrationSelectedSkus.length === 0) {
+      setNotice("No migration SKU is selected.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await request<{ results: ProductMigrationRunResult[] }>("/api/migrations/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseSkus: migrationSelectedSkus })
+      });
+      setMigrationResults(response.results);
+      const createdCount = response.results.filter((result) => result.newProductGid).length;
+      const failedCount = response.results.filter((result) => result.status === "failed").length;
+      const skippedCount = response.results.filter((result) => result.status === "skipped").length;
+      const failedErrors = response.results
+        .filter((result) => result.status === "failed" && result.error)
+        .map((result) => `${result.baseSku}: ${result.error}`);
+      setNotice([
+        `${createdCount} draft product(s) created. ${failedCount} failed. ${skippedCount} skipped.`,
+        ...failedErrors.slice(0, 3)
+      ].join(" "));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -696,6 +768,17 @@ export default function AppShell({ page }: { page: PageKey }) {
               onSetDeleteOldMediaForAll={setDeleteOldMediaForAll}
               onMarkBatchUploaded={markReviewBatchUploaded}
               onResetBatchProgress={resetReviewBatchProgress}
+            />
+          ) : page === "migration" ? (
+            <MigrationPage
+              busy={busy}
+              scan={migrationScan}
+              selectedSkus={migrationSelectedSkus}
+              results={migrationResults}
+              onScan={scanProductMigrationCandidates}
+              onRun={runProductMigrationCandidates}
+              onToggleSku={setMigrationSkuSelected}
+              onSetAll={setAllMigrationSkus}
             />
           ) : (
             <HistoryPage history={history} refresh={loadHistory} />
@@ -1099,6 +1182,256 @@ function ReviewPage({
       {lastJob ? <UploadProgress job={lastJob} /> : null}
     </div>
   );
+}
+
+function MigrationPage({
+  busy,
+  scan,
+  selectedSkus,
+  results,
+  onScan,
+  onRun,
+  onToggleSku,
+  onSetAll
+}: {
+  busy: boolean;
+  scan: ProductMigrationScanResult | null;
+  selectedSkus: string[];
+  results: ProductMigrationRunResult[];
+  onScan: () => void;
+  onRun: () => void;
+  onToggleSku: (baseSku: string, selected: boolean) => void;
+  onSetAll: (selected: boolean) => void;
+}) {
+  const selectableCandidates = scan?.candidates.filter((candidate) => !candidate.existingUnifiedProductId) ?? [];
+  const selectedSet = new Set(selectedSkus);
+  const selectedCount = selectableCandidates.filter((candidate) => selectedSet.has(candidate.baseSku)).length;
+  const allSelected = selectableCandidates.length > 0 && selectedCount === selectableCandidates.length;
+
+  return (
+    <div className="space-y-4">
+      <section className="admin-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">Regional product consolidation</h2>
+            <p className="text-sm admin-muted">{scan ? `${scan.candidates.length} complete set(s), ${scan.issues.length} issue(s), scanned ${new Date(scan.scannedAt).toLocaleString()}` : "No migration scan loaded."}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={busy} onClick={onScan} className="admin-button">
+              <RefreshCw size={17} />
+              Find regional sets
+            </button>
+            <button type="button" disabled={busy || selectedSkus.length === 0} onClick={onRun} className="admin-button-primary">
+              <PackagePlus size={17} />
+              Create selected drafts
+            </button>
+          </div>
+        </div>
+        {scan ? (
+          <div className="mt-3 grid gap-2 md:grid-cols-4">
+            <MetricPanel label="Complete sets" value={scan.candidates.length} />
+            <MetricPanel label="Selectable" value={selectableCandidates.length} />
+            <MetricPanel label="Selected" value={selectedCount} />
+            <MetricPanel label="Manual review" value={scan.issues.length + scan.candidates.filter((candidate) => candidate.manualReviewFields.length > 0).length} />
+          </div>
+        ) : null}
+      </section>
+
+      {scan ? (
+        <section className="admin-card overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4 dark:border-white/10">
+            <div>
+              <h2 className="text-base font-semibold">Eligible product sets</h2>
+              <p className="text-sm admin-muted">{selectedCount} of {selectableCandidates.length} selectable SKU(s) checked</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={busy || selectableCandidates.length === 0 || allSelected} onClick={() => onSetAll(true)} className="admin-button">Select all</button>
+              <button type="button" disabled={busy || selectedCount === 0} onClick={() => onSetAll(false)} className="admin-button">Clear</button>
+            </div>
+          </div>
+          {scan.candidates.length ? (
+            <div className="overflow-x-auto">
+              <table className="admin-table">
+                <thead className="admin-table-head">
+                  <tr>
+                    <th className="w-12 px-3 py-2">Run</th>
+                    <th className="px-3 py-2">SKU</th>
+                    <th className="px-3 py-2">Regional inventory</th>
+                    <th className="px-3 py-2">Price</th>
+                    <th className="px-3 py-2">Images</th>
+                    <th className="px-3 py-2">Metafields</th>
+                    <th className="px-3 py-2">Review</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scan.candidates.map((candidate) => (
+                    <MigrationCandidateRow
+                      key={candidate.baseSku}
+                      candidate={candidate}
+                      selected={selectedSet.has(candidate.baseSku)}
+                      busy={busy}
+                      onToggle={onToggleSku}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="p-5 text-sm admin-muted">No complete LUZ/VIS/MIN sets were found.</p>
+          )}
+        </section>
+      ) : null}
+
+      {scan?.issues.length ? (
+        <section className="admin-card overflow-hidden">
+          <div className="border-b border-line p-4 dark:border-white/10">
+            <h2 className="text-base font-semibold">Incomplete or duplicate sets</h2>
+            <p className="text-sm admin-muted">{scan.issues.length} SKU group(s)</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="admin-table">
+              <thead className="admin-table-head">
+                <tr>
+                  <th className="px-3 py-2">SKU</th>
+                  <th className="px-3 py-2">Reason</th>
+                  <th className="px-3 py-2">Products found</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scan.issues.map((issue) => (
+                  <tr key={issue.baseSku} className="admin-table-row align-top">
+                    <td className="px-3 py-3 font-mono text-xs">{issue.baseSku}</td>
+                    <td className="px-3 py-3 text-sm">{issue.reason}</td>
+                    <td className="px-3 py-3 text-xs admin-muted">{issue.products.map((product) => `${product.prefix}: ${product.sourceTitle}`).join(" | ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {results.length ? (
+        <section className="admin-card overflow-hidden">
+          <div className="border-b border-line p-4 dark:border-white/10">
+            <h2 className="text-base font-semibold">Migration results</h2>
+            <p className="text-sm admin-muted">{results.length} processed SKU(s)</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="admin-table">
+              <thead className="admin-table-head">
+                <tr>
+                  <th className="px-3 py-2">SKU</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">New product GID</th>
+                  <th className="px-3 py-2">Inventory set</th>
+                  <th className="px-3 py-2">Images</th>
+                  <th className="px-3 py-2">Manual review</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((result) => (
+                  <tr key={result.baseSku} className="admin-table-row align-top">
+                    <td className="px-3 py-3 font-mono text-xs">{result.baseSku}</td>
+                    <td className="px-3 py-3">
+                      <span className={migrationStatusClass(result.status)}>{result.status}</span>
+                      {result.error ? <p className="mt-1 max-w-md text-xs text-clay dark:text-[#ffb39d]">{result.error}</p> : null}
+                    </td>
+                    <td className="px-3 py-3 font-mono text-xs">{result.newProductGid ?? "-"}</td>
+                    <td className="px-3 py-3 text-xs">
+                      <div className="grid gap-1">
+                        {result.inventorySet.map((item) => <span key={item.locationName}>{item.locationName}: {item.quantity}</span>)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-sm">{result.imagesAttached}</td>
+                    <td className="px-3 py-3 text-xs admin-muted">{result.missingFields.length ? result.missingFields.join(", ") : "None"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {!scan ? <p className="admin-card p-5 text-sm admin-muted">Run a migration scan to load regional product sets.</p> : null}
+    </div>
+  );
+}
+
+function MetricPanel({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="admin-panel px-3 py-2">
+      <p className="text-xs font-semibold uppercase admin-muted">{label}</p>
+      <p className="mt-1 text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function MigrationCandidateRow({
+  candidate,
+  selected,
+  busy,
+  onToggle
+}: {
+  candidate: ProductMigrationCandidate;
+  selected: boolean;
+  busy: boolean;
+  onToggle: (baseSku: string, selected: boolean) => void;
+}) {
+  const disabled = busy || Boolean(candidate.existingUnifiedProductId);
+  const populatedMetafields = 12 - candidate.missingFields.length;
+
+  return (
+    <tr className="admin-table-row align-top">
+      <td className="px-3 py-3">
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={disabled}
+          onChange={(event) => onToggle(candidate.baseSku, event.target.checked)}
+          className="h-4 w-4 rounded border-line text-moss dark:border-white/20 dark:bg-[#0f1115]"
+          aria-label={`Select ${candidate.baseSku}`}
+        />
+      </td>
+      <td className="px-3 py-3">
+        <p className="font-mono text-xs font-semibold">{candidate.baseSku}</p>
+        <p className="mt-1 max-w-[220px] truncate text-xs admin-muted">{candidate.productType || "No product type"}</p>
+        {candidate.existingUnifiedProductId ? <p className="mt-1 text-xs text-clay dark:text-[#ffb39d]">Existing unified product</p> : null}
+      </td>
+      <td className="px-3 py-3 text-xs">
+        <div className="grid gap-1">
+          {candidate.regionalProducts.map((product) => (
+            <span key={product.prefix} className="whitespace-nowrap">
+              <span className="font-semibold">{product.prefix}</span> {product.locationName}: {product.quantity}
+            </span>
+          ))}
+        </div>
+      </td>
+      <td className="px-3 py-3 font-mono text-xs">{candidate.price}</td>
+      <td className="px-3 py-3 text-sm">{candidate.imageUrls.length}</td>
+      <td className="px-3 py-3">
+        <span className={candidate.missingFields.length ? "admin-badge bg-clay/10 text-clay dark:bg-clay/20 dark:text-[#ffb39d]" : "admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]"}>
+          {populatedMetafields}/12
+        </span>
+        {candidate.missingFields.length ? <p className="mt-1 max-w-sm text-xs admin-muted">{candidate.missingFields.join(", ")}</p> : null}
+      </td>
+      <td className="px-3 py-3">
+        {candidate.manualReviewFields.length ? (
+          <div className="flex max-w-sm flex-wrap gap-1">
+            {candidate.manualReviewFields.map((field) => <span key={field} className="admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65">{field}</span>)}
+          </div>
+        ) : (
+          <span className="admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]">Ready</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function migrationStatusClass(status: ProductMigrationRunResult["status"]) {
+  if (status === "success") return "admin-badge bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]";
+  if (status === "skipped") return "admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65";
+  return "admin-badge bg-clay/10 text-clay dark:bg-clay/20 dark:text-[#ffb39d]";
 }
 
 function HistoryPage({ history, refresh }: { history: UploadJob[]; refresh: () => void }) {
