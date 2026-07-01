@@ -228,6 +228,11 @@ describe("product migration inventory activation", () => {
     const quantities = buildUnifiedInventoryQuantities(
       "inventory-item-1",
       candidate,
+      new Map([
+        ["LUZ", 2],
+        ["VIS", 0],
+        ["MIN", 7],
+      ]),
     );
 
     expect(quantities).toEqual([
@@ -235,19 +240,19 @@ describe("product migration inventory activation", () => {
         inventoryItemId: "inventory-item-1",
         locationId: "gid://shopify/Location/86389424402",
         quantity: 3,
-        changeFromQuantity: null,
+        changeFromQuantity: 2,
       },
       {
         inventoryItemId: "inventory-item-1",
         locationId: "gid://shopify/Location/101194629394",
         quantity: 5,
-        changeFromQuantity: null,
+        changeFromQuantity: 0,
       },
       {
         inventoryItemId: "inventory-item-1",
         locationId: "gid://shopify/Location/101194662162",
         quantity: 7,
-        changeFromQuantity: null,
+        changeFromQuantity: 7,
       },
     ]);
   });

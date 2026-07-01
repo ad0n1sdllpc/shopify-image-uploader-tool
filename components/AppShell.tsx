@@ -486,7 +486,7 @@ export default function AppShell({ page }: { page: PageKey }) {
         .filter((result) => result.status === "failed" && result.error)
         .map((result) => `${result.baseSku}: ${result.error}`);
       setNotice([
-        `${createdCount} draft product(s) created. ${failedCount} failed. ${skippedCount} skipped.`,
+        `${createdCount} active product(s) created. ${failedCount} failed. ${skippedCount} skipped.`,
         ...failedErrors.slice(0, 3)
       ].join(" "));
     } catch (nextError) {

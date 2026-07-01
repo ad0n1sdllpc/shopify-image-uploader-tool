@@ -138,12 +138,7 @@ type ProductCreateResponse = {
         nodes: {
           id: string;
           price: string;
-          inventoryItem: {
-            id: string;
-            sku: string | null;
-            tracked: boolean;
-            requiresShipping: boolean;
-          };
+          inventoryItem: { id: string; sku: string | null; tracked: boolean; requiresShipping: boolean };
         }[];
       };
       metafields: {
@@ -430,6 +425,31 @@ const PRODUCT_DETAILS_QUERY = `
     }
   }
 `;
+
+type MigrationProductsResponse = {
+  products: {
+    nodes: MigrationProductNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+};
+
+type MigrationLocationsResponse = {
+  locations: {
+    nodes: { id: string; name: string }[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+};
+
+type MigrationProductIndexResponse = {
+  products: {
+    nodes: MigrationProductIndexNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+};
+
+type MigrationProductSourceDetailsResponse = {
+  product: MigrationProductNode | null;
+};
 
 export async function scanProductMigrations(): Promise<ProductMigrationScanResult> {
   const products = await fetchMigrationProducts([]);
@@ -1137,7 +1157,7 @@ async function createDraftProduct(
     {
       product: {
         title: candidate.title,
-        status: "DRAFT",
+        status: "ACTIVE",
         descriptionHtml: candidate.descriptionHtml,
         productType: candidate.productType,
         tags: candidate.tags,
@@ -1235,9 +1255,11 @@ async function setUnifiedInventoryQuantities(
   inventoryItemId: string,
   candidate: ProductMigrationCandidate,
 ) {
+  const currentQuantities = await fetchUnifiedInventoryQuantities(productId);
   const quantities = buildUnifiedInventoryQuantities(
     inventoryItemId,
     candidate,
+    currentQuantities,
   );
   if (quantities.length === 0) return;
 
@@ -1255,16 +1277,45 @@ async function setUnifiedInventoryQuantities(
   throwIfUserErrors(data.inventorySetQuantities.userErrors);
 }
 
+async function fetchUnifiedInventoryQuantities(productId: string) {
+  const data = await shopifyGraphql<MigrationProductDetailsResponse>(
+    PRODUCT_DETAILS_QUERY,
+    { id: productId },
+  );
+  const product = data.product;
+  if (!product)
+    throw new Error("Could not load inventory levels for the created product.");
+
+  const variant = product.variants.nodes[0];
+  if (!variant)
+    throw new Error("Could not load inventory levels for the created variant.");
+
+  const currentQuantities = new Map<RegionalPrefix, number>();
+  for (const regionalPrefix of regionalPrefixes) {
+    const locationId = migrationLocationIdByPrefix[regionalPrefix];
+    const location = variant.inventoryItem.inventoryLevels.nodes.find(
+      (level) => level.location.id === locationId,
+    );
+    const quantity =
+      location?.quantities.find((entry) => entry.name === "available")
+        ?.quantity ?? 0;
+    currentQuantities.set(regionalPrefix, quantity);
+  }
+
+  return currentQuantities;
+}
+
 export function buildUnifiedInventoryQuantities(
   inventoryItemId: string,
   candidate: ProductMigrationCandidate,
+  currentQuantities: Map<RegionalPrefix, number>,
 ) {
   return candidate.regionalProducts
     .map((product) => ({
       inventoryItemId,
       locationId: migrationLocationIdByPrefix[product.prefix],
       quantity: product.quantity,
-      changeFromQuantity: null,
+      changeFromQuantity: currentQuantities.get(product.prefix) ?? 0,
     }))
     .filter(
       (input) =>
@@ -1288,9 +1339,9 @@ async function verifyMigratedProduct(
     throw new Error(
       `Verification failed: title is ${product.title}, expected ${candidate.title}.`,
     );
-  if (product.status !== "DRAFT")
+  if (product.status !== "ACTIVE")
     throw new Error(
-      `Verification failed: status is ${product.status}, expected DRAFT.`,
+      `Verification failed: status is ${product.status}, expected ACTIVE.`,
     );
 
   const variant = product.variants.nodes[0];
