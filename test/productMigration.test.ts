@@ -579,6 +579,38 @@ describe("product migration Excel description enrichment", () => {
     expect(metafields.waterAbsorption).toBe("0.07%");
   });
 
+  it("does not split grout color names into tile material values", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "01",
+          Category: "Category: Grout",
+          Description: "Description: Epoxy Grout, Color: Porcelain White, 400ml",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          title: "LUZ 01 PORCELAIN WHITE",
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-01",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const metafields = scan.candidates[0].metafields;
+
+    expect(metafields.colorTone).toEqual(["Porcelain White"]);
+    expect(metafields.materialType).toEqual([]);
+  });
+
   it("matches regional title fallback to Excel item code", () => {
     const catalog = parseMigrationDescriptionWorkbook(
       workbookBuffer([

@@ -980,7 +980,10 @@ function metafieldsFromDescriptionRow(
       descriptionText,
     ),
     features: extractFeatures(descriptionText),
-    materialType: extractMaterialTypes(descriptionText),
+    materialType: extractMaterialTypes(
+      descriptionText,
+      [row.category, row.description].filter(Boolean).join(" "),
+    ),
     printTechnology: extractPrintTechnologies(descriptionText),
     colorTone: extractColorTones(descriptionText),
     waterAbsorption: extractWaterAbsorption(descriptionText),
@@ -1952,8 +1955,23 @@ function extractFeatures(text: string) {
   return extractMappedValues([text], migrationTaxonomy.features);
 }
 
-function extractMaterialTypes(text: string) {
+function extractMaterialTypes(text: string, contextText = text) {
+  const explicit = text.match(
+    /\bmaterial\s*(?:type)?\s*:\s*([A-Za-z][A-Za-z\s-]*)/i,
+  );
+  if (explicit) {
+    return extractKnownValues([explicit[1]], migrationTaxonomy.material_type);
+  }
+
+  if (!isTileMaterialContext(contextText)) return [];
   return extractKnownValues([text], migrationTaxonomy.material_type);
+}
+
+function isTileMaterialContext(text: string) {
+  const normalized = text.toLowerCase();
+  if (/\b(?:grout|adhesive|sealant|caulk|filler)\b/.test(normalized))
+    return false;
+  return /\b(?:tile|tiles|slab|slabs|porcelain|ceramic)\b/.test(normalized);
 }
 
 function extractPrintTechnologies(text: string) {
