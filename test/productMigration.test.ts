@@ -327,6 +327,7 @@ describe("product migration metafield extraction", () => {
       itemCode: "YM6623",
       tileSize: "60x60 cm",
       piecesPerBox: null,
+      box: null,
       surfaceFinish: ["Polished"],
       features: ["Rectified"],
       materialType: ["Porcelain"],
@@ -348,6 +349,7 @@ describe("product migration metafield extraction", () => {
       itemCode: "YM6623",
       tileSize: "60x60 cm",
       piecesPerBox: null,
+      box: null,
       surfaceFinish: ["Polished"],
       features: [],
       materialType: ["Porcelain"],
@@ -382,6 +384,7 @@ describe("product migration metafield extraction", () => {
       value: JSON.stringify(["Luzon", "Visayas", "Mindanao"]),
     });
     expect(inputs.find((input) => input.key === "pieces_per_box")).toBeUndefined();
+    expect(inputs.find((input) => input.key === "box")).toBeUndefined();
     expect(inputs.find((input) => input.key === "disclaimer")).toBeUndefined();
     expect(inputs.some((input) => input.key === "product_description")).toBe(
       false,
@@ -526,6 +529,7 @@ describe("product migration Excel description enrichment", () => {
       tileSize: "30x60 cm",
       surfaceFinish: ["Polished"],
       piecesPerBox: "10",
+      box: "Box",
       colorTone: ["Light Gray", "Gray"],
       waterAbsorption: "E<0.5%",
       thicknessMm: "7.1+/-2.0",
@@ -536,6 +540,14 @@ describe("product migration Excel description enrichment", () => {
       materialType: ["Porcelain"],
       printTechnology: ["Inkjet Print"],
       features: ["Stain Resistant"],
+    });
+    expect(
+      metafieldInputs(candidate.metafields).find(
+        (input) => input.key === "box",
+      ),
+    ).toMatchObject({
+      type: "single_line_text_field",
+      value: "Box",
     });
     expect(candidate.metafields.disclaimer).toBe(
       "Color of website images may vary slightly from actual products.",
