@@ -98,6 +98,21 @@ function workbookBuffer(rows: Record<string, string>[]) {
     "Surface",
     "Disclaimer",
     "Item Price",
+    "Tile Size",
+    "Surface finish",
+    "Product Category",
+    "Description (clean)",
+    "Color Tone",
+    "Weight",
+    "Number of Pieces per box",
+    "Thickness(mm)",
+    "Water absorption",
+    "Traffic rating",
+    "Slip resistant",
+    "Rectified",
+    "Application area",
+    "Material Type",
+    "Print Technology",
   ];
   const sheetRows = [
     headers,
@@ -316,7 +331,7 @@ describe("product migration metafield extraction", () => {
       printTechnology: ["Inkjet Print"],
       colorTone: [],
       waterAbsorption: "E<0.5%",
-      thicknessMm: 8.2,
+      thicknessMm: "8.2",
       rectified: true,
       trafficRating: ["Moderate"],
       applicationArea: ["Floor", "Indoor"],
@@ -336,7 +351,7 @@ describe("product migration metafield extraction", () => {
       printTechnology: ["Inkjet Print"],
       colorTone: [],
       waterAbsorption: "E<0.5%",
-      thicknessMm: 8.2,
+      thicknessMm: "8.2",
       rectified: true,
       trafficRating: ["Moderate"],
       applicationArea: ["Floor", "Indoor"],
@@ -436,7 +451,7 @@ describe("product migration Excel description enrichment", () => {
       printTechnology: ["Inkjet Print"],
       colorTone: [],
       waterAbsorption: "E<0.5%",
-      thicknessMm: 8.2,
+      thicknessMm: "8.2",
       rectified: true,
       applicationArea: [
         "Floor",
@@ -450,6 +465,72 @@ describe("product migration Excel description enrichment", () => {
     expect(scan.candidates[0].missingFields).not.toContain(
       "custom.application_area",
     );
+  });
+
+  it("prefers structured workbook columns and parses shipping weight", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "MILAN18",
+          "Tile Size": "30x60 CM",
+          "Surface finish": "Polished",
+          "Product Category": "Tiles",
+          "Description (clean)": "Light Gray marble",
+          "Color Tone": "Light Gray; Gray",
+          Weight: "2.7 kg per piece",
+          "Thickness(mm)": "7.1+/-2.0",
+          "Water absorption": "E<0.5%",
+          "Traffic rating": "High",
+          Rectified: "Yes",
+          "Application area": "Wall; Indoor",
+          "Suitable For": "Living rooms; Swimming pool",
+          "Material Type": "Porcelain",
+          "Print Technology": "Inkjet Print",
+          Features: "Stain-resistant",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-MILAN18",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const candidate = scan.candidates[0];
+
+    expect(candidate).toMatchObject({
+      baseSku: "MILAN18",
+      productType: "Tiles",
+      shippingWeight: {
+        value: 2.7,
+        unit: "KILOGRAMS",
+        source: "2.7 kg per piece",
+      },
+    });
+    expect(candidate.descriptionHtml).toBe("<p>Light Gray marble</p>");
+    expect(candidate.metafields).toMatchObject({
+      tileSize: "30x60 cm",
+      surfaceFinish: ["Polished"],
+      colorTone: ["Light Gray"],
+      waterAbsorption: "E<0.5%",
+      thicknessMm: "7.1+/-2.0",
+      rectified: true,
+      trafficRating: ["High"],
+      applicationArea: ["Wall", "Indoor"],
+      suitableFor: ["Living Room", "Swimming Pool"],
+      materialType: ["Porcelain"],
+      printTechnology: ["Inkjet Print"],
+      features: ["Stain Resistant"],
+    });
   });
 
   it("categorizes sample text into description, color tone, finish, application, and suitable-for metafields", () => {
@@ -494,7 +575,7 @@ describe("product migration Excel description enrichment", () => {
     expect(candidate.metafields.trafficRating).toEqual(["High"]);
     expect(candidate.metafields.materialType).toEqual([]);
     expect(candidate.metafields.printTechnology).toEqual(["Inkjet Print"]);
-    expect(candidate.metafields.thicknessMm).toBe(9.5);
+    expect(candidate.metafields.thicknessMm).toBe("9.5");
     expect(candidate.metafields.rectified).toBe(true);
     expect(candidate.metafields.applicationArea).toEqual([
       "Floor",

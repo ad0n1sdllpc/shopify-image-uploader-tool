@@ -11,6 +11,7 @@ import type {
   ProductMigrationRegionalProduct,
   ProductMigrationRunResult,
   ProductMigrationScanResult,
+  ProductMigrationShippingWeight,
   RegionalPrefix,
 } from "@/types";
 
@@ -137,11 +138,19 @@ export type ProductMigrationDescriptionRow = {
   size: string | null;
   category: string | null;
   description: string | null;
+  colorTone: string | null;
+  weight: string | null;
   features: string | null;
   finish: string | null;
   application: string | null;
   suitableFor: string | null;
   surface: string | null;
+  waterAbsorption: string | null;
+  thickness: string | null;
+  trafficRating: string | null;
+  rectified: string | null;
+  materialType: string | null;
+  printTechnology: string | null;
   disclaimer: string | null;
 };
 
@@ -881,22 +890,39 @@ function cellValue(
 function descriptionRowFromWorksheetRow(
   row: Record<string, unknown>,
 ): ProductMigrationDescriptionRow {
-  const finish = nullableWorksheetString(row, "Finish");
+  const finish = nullableWorksheetStringAny(row, [
+    "Finish",
+    "Surface finish",
+  ]);
   const features =
-    nullableWorksheetString(row, "Features") ??
+    nullableWorksheetStringAny(row, ["Features"]) ??
     (finish && /^features\s*:/i.test(finish) ? finish : null);
 
   return {
-    itemCode: worksheetString(row, "Item Code"),
-    size: nullableWorksheetString(row, "SIZE"),
-    category: nullableWorksheetString(row, "Category"),
-    description: nullableWorksheetString(row, "Description"),
+    itemCode: worksheetStringAny(row, ["Item Code"]),
+    size: nullableWorksheetStringAny(row, ["SIZE", "Tile Size"]),
+    category: nullableWorksheetStringAny(row, ["Category", "Product Category"]),
+    description: nullableWorksheetStringAny(row, [
+      "Description",
+      "Description (clean)",
+    ]),
+    colorTone: nullableWorksheetStringAny(row, ["Color Tone"]),
+    weight: nullableWorksheetStringAny(row, ["Weight"]),
     features,
     finish: features === finish ? null : finish,
-    application: nullableWorksheetString(row, "Application"),
-    suitableFor: nullableWorksheetString(row, "Suitable For"),
-    surface: nullableWorksheetString(row, "Surface"),
-    disclaimer: nullableWorksheetString(row, "Disclaimer"),
+    application: nullableWorksheetStringAny(row, [
+      "Application",
+      "Application area",
+    ]),
+    suitableFor: nullableWorksheetStringAny(row, ["Suitable For"]),
+    surface: nullableWorksheetStringAny(row, ["Surface", "Surface finish"]),
+    waterAbsorption: nullableWorksheetStringAny(row, ["Water absorption"]),
+    thickness: nullableWorksheetStringAny(row, ["Thickness(mm)", "Thickness"]),
+    trafficRating: nullableWorksheetStringAny(row, ["Traffic rating"]),
+    rectified: nullableWorksheetStringAny(row, ["Rectified"]),
+    materialType: nullableWorksheetStringAny(row, ["Material Type"]),
+    printTechnology: nullableWorksheetStringAny(row, ["Print Technology"]),
+    disclaimer: nullableWorksheetStringAny(row, ["Disclaimer"]),
   };
 }
 
@@ -907,6 +933,22 @@ function worksheetString(row: Record<string, unknown>, header: string) {
 
 function nullableWorksheetString(row: Record<string, unknown>, header: string) {
   const value = worksheetString(row, header);
+  return value.length ? value : null;
+}
+
+function worksheetStringAny(row: Record<string, unknown>, headers: string[]) {
+  for (const header of headers) {
+    const value = worksheetString(row, header);
+    if (value.length) return value;
+  }
+  return "";
+}
+
+function nullableWorksheetStringAny(
+  row: Record<string, unknown>,
+  headers: string[],
+) {
+  const value = worksheetStringAny(row, headers);
   return value.length ? value : null;
 }
 
@@ -962,37 +1004,67 @@ function metafieldsFromDescriptionRow(
   );
   const descriptionText = [
     row.description,
+    row.colorTone,
     row.features,
     row.finish,
     row.application,
     row.suitableFor,
     row.surface,
+    row.waterAbsorption,
+    row.thickness,
+    row.trafficRating,
+    row.rectified,
+    row.materialType,
+    row.printTechnology,
     row.category,
   ]
     .filter((value): value is string => Boolean(value))
     .join(" ");
+  const directSurfaceFinishes = parseDelimitedValues(
+    [row.surface, row.finish].filter(Boolean).join("; "),
+  );
+  const directColorTones = parseDelimitedValues(row.colorTone);
+  const directMaterialTypes = parseDelimitedValues(row.materialType);
+  const directPrintTechnologies = parseDelimitedValues(row.printTechnology);
+  const directTrafficRatings = parseDelimitedValues(row.trafficRating);
+  const directApplicationAreas = parseDelimitedValues(row.application, {
+    splitWords: true,
+  });
+  const rectified = parseWorksheetBoolean(row.rectified);
 
   return {
     itemCode: row.itemCode || baseSku,
     tileSize: extractTileSize([row.size ?? ""], descriptionText),
-    surfaceFinish: extractSurfaceFinishes(
-      [row.surface ?? "", row.finish ?? ""],
-      descriptionText,
-    ),
+    surfaceFinish: directSurfaceFinishes.length
+      ? directSurfaceFinishes
+      : extractSurfaceFinishes([row.surface ?? "", row.finish ?? ""], descriptionText),
     features: extractFeatures(descriptionText),
-    materialType: extractMaterialTypes(
-      descriptionText,
-      [row.category, row.description].filter(Boolean).join(" "),
-    ),
-    printTechnology: extractPrintTechnologies(descriptionText),
-    colorTone: extractColorTones(descriptionText),
-    waterAbsorption: extractWaterAbsorption(descriptionText),
-    thicknessMm: extractThicknessMm(descriptionText),
-    rectified: /\brectified\b/i.test(descriptionText),
-    trafficRating: extractTrafficRatings(descriptionText),
-    applicationArea: extractApplicationAreas(
-      [row.application, row.description].filter(Boolean).join("; "),
-    ),
+    materialType: directMaterialTypes.length
+      ? directMaterialTypes
+      : extractMaterialTypes(
+          descriptionText,
+          [row.category, row.description].filter(Boolean).join(" "),
+        ),
+    printTechnology: directPrintTechnologies.length
+      ? directPrintTechnologies
+      : extractPrintTechnologies(descriptionText),
+    colorTone: directColorTones.length
+      ? removeContainedValues(directColorTones)
+      : extractColorTones(descriptionText),
+    waterAbsorption:
+      cleanLabeledValue(row.waterAbsorption, "Water absorption") ??
+      extractWaterAbsorption(descriptionText),
+    thicknessMm:
+      normalizeThicknessValue(row.thickness) ?? extractThicknessMm(descriptionText),
+    rectified: rectified ?? /\brectified\b/i.test(descriptionText),
+    trafficRating: directTrafficRatings.length
+      ? directTrafficRatings
+      : extractTrafficRatings(descriptionText),
+    applicationArea: directApplicationAreas.length
+      ? directApplicationAreas
+      : extractApplicationAreas(
+          [row.application, row.description].filter(Boolean).join("; "),
+        ),
     suitableFor: extractSuitableForValues(row.suitableFor ?? ""),
     regionAvailability: regionAvailabilityFromPrefixes(availablePrefixes),
     disclaimer: cleanLabeledValue(row.disclaimer, "Disclaimer"),
@@ -1010,6 +1082,94 @@ function cleanLabeledValue(value: string | null, label: string) {
   return value
     .replace(new RegExp(`^\\s*${escapeRegExp(label)}\\s*:\\s*`, "i"), "")
     .trim();
+}
+
+function cleanKnownLabels(value: string | null | undefined) {
+  if (!value) return "";
+  return [
+    "Description",
+    "Category",
+    "Application",
+    "Application area",
+    "Suitable For",
+    "Surface",
+    "Surface finish",
+    "Color Tone",
+    "Material Type",
+    "Print Technology",
+    "Traffic rating",
+    "Water absorption",
+    "Thickness",
+    "Features",
+  ].reduce(
+    (current, label) =>
+      current.replace(
+        new RegExp(`^\\s*${escapeRegExp(label)}\\s*:\\s*`, "i"),
+        "",
+      ),
+    value,
+  );
+}
+
+function parseDelimitedValues(
+  value: string | null | undefined,
+  options: { splitWords?: boolean } = {},
+) {
+  const cleaned = cleanKnownLabels(value);
+  if (!cleaned) return [];
+  const wordSplit = options.splitWords ? "\\b(?:or|and)\\b|" : "";
+  const delimiter = new RegExp(`${wordSplit}[;,/|]+`, "gi");
+  return removeContainedValues(
+    cleaned
+      .replace(delimiter, ";")
+      .split(";")
+      .map((item) => titleCase(item.replace(/\s+/g, " ").trim()))
+      .filter(Boolean),
+  );
+}
+
+function parseWorksheetBoolean(value: string | null | undefined) {
+  const cleaned = cleanKnownLabels(value).trim();
+  if (!cleaned) return null;
+  if (/^(?:true|yes|y|1|rectified)$/i.test(cleaned)) return true;
+  if (/^(?:false|no|n|0|not rectified|non-rectified)$/i.test(cleaned))
+    return false;
+  return null;
+}
+
+function parseShippingWeight(
+  value: string | null | undefined,
+): ProductMigrationShippingWeight | null {
+  const cleaned = cleanKnownLabels(value).replace(/,/g, "").trim();
+  if (!cleaned) return null;
+
+  const match = cleaned.match(
+    /(\d+(?:\.\d+)?)\s*(kg|kgs|kilogram|kilograms|g|gram|grams|lb|lbs|pound|pounds|oz|ounce|ounces)\b/i,
+  );
+  if (!match) return null;
+
+  const unitMap: Record<string, ProductMigrationShippingWeight["unit"]> = {
+    kg: "KILOGRAMS",
+    kgs: "KILOGRAMS",
+    kilogram: "KILOGRAMS",
+    kilograms: "KILOGRAMS",
+    g: "GRAMS",
+    gram: "GRAMS",
+    grams: "GRAMS",
+    lb: "POUNDS",
+    lbs: "POUNDS",
+    pound: "POUNDS",
+    pounds: "POUNDS",
+    oz: "OUNCES",
+    ounce: "OUNCES",
+    ounces: "OUNCES",
+  };
+
+  return {
+    value: Number(match[1]),
+    unit: unitMap[match[2].toLowerCase()],
+    source: cleaned,
+  };
 }
 
 function categoryValue(value: string | null | undefined) {
@@ -1344,6 +1504,9 @@ function candidateFromSourceProducts(
     "";
   const price = canonicalProduct.variant.price;
   const availablePrefixes = products.map((product) => product.identity.prefix);
+  const shippingWeight = descriptionRow
+    ? parseShippingWeight(descriptionRow.weight)
+    : null;
   const metafields = descriptionRow
     ? metafieldsFromDescriptionRow(baseSku, descriptionRow, availablePrefixes)
     : extractMigrationMetafields(
@@ -1372,6 +1535,7 @@ function candidateFromSourceProducts(
     price,
     tags,
     productType,
+    shippingWeight,
     imageUrls: candidateImageUrls(products),
     regionalProducts: products.map((product) =>
       regionalProductSummary(product),
@@ -1559,8 +1723,8 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
     metafields.thicknessMm !== null
       ? metafieldInput(
           "thickness_mm",
-          "number_decimal",
-          String(metafields.thicknessMm),
+          "single_line_text_field",
+          metafields.thicknessMm,
         )
       : null,
     metafieldInput("rectified", "boolean", String(metafields.rectified)),
@@ -1676,6 +1840,16 @@ async function updateDefaultVariant(
           sku: candidate.baseSku,
           tracked: true,
           requiresShipping: true,
+          ...(candidate.shippingWeight
+            ? {
+                measurement: {
+                  weight: {
+                    value: candidate.shippingWeight.value,
+                    unit: candidate.shippingWeight.unit,
+                  },
+                },
+              }
+            : {}),
         },
         inventoryPolicy: "DENY",
       },
@@ -2004,10 +2178,24 @@ function normalizeWaterAbsorption(value: string) {
 }
 
 function extractThicknessMm(text: string) {
-  const explicit = text.match(/thickness[^0-9]*(\d+(?:\.\d+)?)\s*mm/i);
+  const explicit = text.match(
+    /thickness[^0-9]*(\d+(?:\.\d+)?(?:\s*(?:\+\/-|\u00b1|[+\-])\s*\d+(?:\.\d+)?)?)\s*mm?/i,
+  );
+  const reverse = text.match(
+    /\b(\d+(?:\.\d+)?(?:\s*(?:\+\/-|\u00b1|[+\-])\s*\d+(?:\.\d+)?)?)\s*mm\s*thickness\b/i,
+  );
   const fallback = text.match(/\b(\d+(?:\.\d+)?)\s*mm\b/i);
-  const value = explicit?.[1] ?? fallback?.[1];
-  return value ? Number(value) : null;
+  const value = explicit?.[1] ?? reverse?.[1] ?? fallback?.[1];
+  return normalizeThicknessValue(value);
+}
+
+function normalizeThicknessValue(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = cleanKnownLabels(value)
+    .replace(/\bmm\b/gi, "")
+    .replace(/\s+/g, "")
+    .trim();
+  return normalized || null;
 }
 
 function extractTrafficRatings(text: string) {
@@ -2073,12 +2261,23 @@ function extractSuitableForValues(text: string) {
     [/\bbalconies?\b/i, "Balcony"],
     [/\bterraces?\b/i, "Terrace"],
     [/\bporches?\b/i, "Porch"],
+    [/\bswimming\s*pools?\b/i, "Swimming Pool"],
+    [/\bgarages?\b/i, "Garage"],
+    [/\bchapels?\b/i, "Chapel"],
+    [/\bboutiques?\b/i, "Boutique"],
   ];
+  const directValues = parseDelimitedValues(cleaned)
+    .filter(
+      (value) => !aliases.some(([pattern]) => pattern.test(value)),
+    );
 
   return uniqueValues(
-    aliases
-      .filter(([pattern]) => pattern.test(normalized))
-      .map(([, value]) => value),
+    [
+      ...aliases
+        .filter(([pattern]) => pattern.test(normalized))
+        .map(([, value]) => value),
+      ...directValues,
+    ],
   );
 }
 

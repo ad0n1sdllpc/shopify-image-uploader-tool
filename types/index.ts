@@ -58,13 +58,19 @@ export type ProductMigrationMetafields = {
   printTechnology: string[];
   colorTone: string[];
   waterAbsorption: string | null;
-  thicknessMm: number | null;
+  thicknessMm: string | null;
   rectified: boolean;
   trafficRating: string[];
   applicationArea: string[];
   suitableFor: string[];
   regionAvailability: string[];
   disclaimer: string | null;
+};
+
+export type ProductMigrationShippingWeight = {
+  value: number;
+  unit: "GRAMS" | "KILOGRAMS" | "OUNCES" | "POUNDS";
+  source: string;
 };
 
 export type ProductMigrationRegionalProduct = {
@@ -83,6 +89,7 @@ export type ProductMigrationCandidate = {
   price: string;
   tags: string[];
   productType: string;
+  shippingWeight: ProductMigrationShippingWeight | null;
   imageUrls: string[];
   regionalProducts: ProductMigrationRegionalProduct[];
   metafields: ProductMigrationMetafields;
