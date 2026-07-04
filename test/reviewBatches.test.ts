@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createReviewBatchPlan, pruneCompletedFolderIds, successfulFolderIdsForJob } from "@/lib/reviewBatches";
+import {
+  createMigrationBatchPlan,
+  createReviewBatchPlan,
+  pruneCompletedFolderIds,
+  pruneCompletedMigrationSkus,
+  successfulFolderIdsForJob,
+} from "@/lib/reviewBatches";
 import type { ImageFolder, LocalImage, ShopifyProduct, UploadJob, UploadSelection } from "@/types";
 
 function image(name: string): LocalImage {
@@ -108,5 +114,39 @@ describe("review upload batches", () => {
 
   it("prunes completed folder ids that no longer exist in current review selections", () => {
     expect(pruneCompletedFolderIds(["folder-1", "folder-old"], [selection(1), selection(2)])).toEqual(["folder-1"]);
+  });
+});
+
+describe("product migration batches", () => {
+  it("splits selected migration SKUs into batches of 10", () => {
+    const skus = Array.from({ length: 23 }, (_, index) => `SKU-${index + 1}`);
+    const plan = createMigrationBatchPlan(skus, []);
+
+    expect(plan.batchSize).toBe(10);
+    expect(plan.currentBatchNumber).toBe(1);
+    expect(plan.totalBatchCount).toBe(3);
+    expect(plan.currentBatchSkus).toEqual(skus.slice(0, 10));
+    expect(plan.waitingSkus).toEqual(skus.slice(10));
+    expect(plan.remainingSkuCount).toBe(23);
+  });
+
+  it("excludes completed migration SKUs and keeps remaining SKUs retryable", () => {
+    const plan = createMigrationBatchPlan(
+      ["A", "B", "C", "D", "E"],
+      ["B", "D"],
+      2,
+    );
+
+    expect(plan.uploadedSkus).toEqual(["B", "D"]);
+    expect(plan.currentBatchSkus).toEqual(["A", "C"]);
+    expect(plan.waitingSkus).toEqual(["E"]);
+    expect(plan.uploadedSkuCount).toBe(2);
+    expect(plan.remainingSkuCount).toBe(3);
+  });
+
+  it("prunes completed migration SKUs that are no longer selected", () => {
+    expect(pruneCompletedMigrationSkus(["A", "OLD"], ["A", "B"])).toEqual([
+      "A",
+    ]);
   });
 });

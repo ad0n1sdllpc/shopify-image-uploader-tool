@@ -207,6 +207,7 @@ describe("product migration grouping", () => {
       price: "1299.00",
       productType: "Tile",
       missingFields: [
+        "custom.pieces_per_box",
         "custom.color_tone",
         "custom.suitable_for",
         "custom.disclaimer",
@@ -325,6 +326,7 @@ describe("product migration metafield extraction", () => {
     expect(metafields).toMatchObject({
       itemCode: "YM6623",
       tileSize: "60x60 cm",
+      piecesPerBox: null,
       surfaceFinish: ["Polished"],
       features: ["Rectified"],
       materialType: ["Porcelain"],
@@ -345,6 +347,7 @@ describe("product migration metafield extraction", () => {
     const inputs = metafieldInputs({
       itemCode: "YM6623",
       tileSize: "60x60 cm",
+      piecesPerBox: null,
       surfaceFinish: ["Polished"],
       features: [],
       materialType: ["Porcelain"],
@@ -378,6 +381,7 @@ describe("product migration metafield extraction", () => {
       type: "list.single_line_text_field",
       value: JSON.stringify(["Luzon", "Visayas", "Mindanao"]),
     });
+    expect(inputs.find((input) => input.key === "pieces_per_box")).toBeUndefined();
     expect(inputs.find((input) => input.key === "disclaimer")).toBeUndefined();
     expect(inputs.some((input) => input.key === "product_description")).toBe(
       false,
@@ -478,6 +482,7 @@ describe("product migration Excel description enrichment", () => {
           "Description (clean)": "Light Gray marble",
           "Color Tone": "Light Gray; Gray",
           Weight: "2.7 kg per piece",
+          "Number of Pieces per box": "10",
           "Thickness(mm)": "7.1+/-2.0",
           "Water absorption": "E<0.5%",
           "Traffic rating": "High",
@@ -520,7 +525,8 @@ describe("product migration Excel description enrichment", () => {
     expect(candidate.metafields).toMatchObject({
       tileSize: "30x60 cm",
       surfaceFinish: ["Polished"],
-      colorTone: ["Light Gray"],
+      piecesPerBox: "10",
+      colorTone: ["Light Gray", "Gray"],
       waterAbsorption: "E<0.5%",
       thicknessMm: "7.1+/-2.0",
       rectified: true,
@@ -531,6 +537,77 @@ describe("product migration Excel description enrichment", () => {
       printTechnology: ["Inkjet Print"],
       features: ["Stain Resistant"],
     });
+    expect(candidate.metafields.disclaimer).toBe(
+      "Color of website images may vary slightly from actual products.",
+    );
+  });
+
+  it("adds the default disclaimer for Tiles when the workbook leaves it blank", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "VINYL1",
+          "Product Category": "Vinyl",
+          "Description (clean)": "Brown wood plank",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-VINYL1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+
+    expect(scan.candidates[0].metafields.disclaimer).toBe(
+      "Color of website images may vary slightly from actual products.",
+    );
+    expect(scan.candidates[0].missingFields).not.toContain(
+      "custom.disclaimer",
+    );
+  });
+
+  it("does not populate text metafields from raw Excel serial numbers", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "SERIAL1",
+          "Product Category": "Tiles",
+          "Description (clean)": "45678",
+          "Color Tone": "45679",
+          "Surface finish": "45680",
+          "Application area": "Wall; Indoor",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-SERIAL1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+
+    expect(scan.candidates[0].descriptionHtml).toBe("");
+    expect(scan.candidates[0].metafields.colorTone).toEqual([]);
+    expect(scan.candidates[0].metafields.surfaceFinish).toEqual([]);
   });
 
   it("categorizes sample text into description, color tone, finish, application, and suitable-for metafields", () => {

@@ -41,6 +41,8 @@ const regionAvailabilityByPrefix: Record<RegionalPrefix, string> = {
 const METAFIELD_KEYS = {
   itemCode: "custom.item_code",
   tileSize: "custom.tile_size",
+  piecesPerBox: "custom.pieces_per_box",
+  box: "custom.box",
   surfaceFinish: "custom.surface_finish",
   features: "custom.features",
   materialType: "custom.material_type",
@@ -136,6 +138,7 @@ type RegionalProductIdentity = {
 export type ProductMigrationDescriptionRow = {
   itemCode: string;
   size: string | null;
+  piecesPerBox: string | null;
   category: string | null;
   description: string | null;
   colorTone: string | null;
@@ -674,6 +677,8 @@ export function extractMigrationMetafields(
   return {
     itemCode: baseSku,
     tileSize: extractTileSize(tags, searchableText),
+    piecesPerBox: null,
+    box: null,
     surfaceFinish: extractSurfaceFinishes(tags, searchableText),
     features: extractFeatures(searchableText),
     materialType: extractMaterialTypes(productDescription),
@@ -901,6 +906,11 @@ function descriptionRowFromWorksheetRow(
   return {
     itemCode: worksheetStringAny(row, ["Item Code"]),
     size: nullableWorksheetStringAny(row, ["SIZE", "Tile Size"]),
+    piecesPerBox: nullableWorksheetStringAny(row, [
+      "Number of Pieces per box",
+      "Pieces Per Box",
+      "Pieces per box",
+    ]),
     category: nullableWorksheetStringAny(row, ["Category", "Product Category"]),
     description: nullableWorksheetStringAny(row, [
       "Description",
@@ -928,7 +938,8 @@ function descriptionRowFromWorksheetRow(
 
 function worksheetString(row: Record<string, unknown>, header: string) {
   const value = row[header];
-  return value === null || value === undefined ? "" : String(value).trim();
+  if (value === null || value === undefined) return "";
+  return normalizeWorksheetString(String(value), header);
 }
 
 function nullableWorksheetString(row: Record<string, unknown>, header: string) {
@@ -950,6 +961,34 @@ function nullableWorksheetStringAny(
 ) {
   const value = worksheetStringAny(row, headers);
   return value.length ? value : null;
+}
+
+function normalizeWorksheetString(value: string, header: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const normalizedHeader = header.trim().toLowerCase();
+  if (
+    isRawExcelSerialNumber(trimmed) &&
+    !numericWorkbookHeaders.has(normalizedHeader)
+  ) {
+    return "";
+  }
+
+  return trimmed;
+}
+
+const numericWorkbookHeaders = new Set([
+  "item code",
+  "number of pieces per box",
+  "pieces per box",
+  "weight",
+]);
+
+function isRawExcelSerialNumber(value: string) {
+  if (!/^\d{4,6}(?:\.\d+)?$/.test(value)) return false;
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 1000;
 }
 
 function descriptionRowForCandidate(
@@ -1023,7 +1062,9 @@ function metafieldsFromDescriptionRow(
   const directSurfaceFinishes = parseDelimitedValues(
     [row.surface, row.finish].filter(Boolean).join("; "),
   );
-  const directColorTones = parseDelimitedValues(row.colorTone);
+  const directColorTones = parseDelimitedValues(row.colorTone, {
+    preserveContainedValues: true,
+  });
   const directMaterialTypes = parseDelimitedValues(row.materialType);
   const directPrintTechnologies = parseDelimitedValues(row.printTechnology);
   const directTrafficRatings = parseDelimitedValues(row.trafficRating);
@@ -1031,10 +1072,13 @@ function metafieldsFromDescriptionRow(
     splitWords: true,
   });
   const rectified = parseWorksheetBoolean(row.rectified);
+  const productCategory = categoryValue(row.category) ?? row.category ?? "";
 
   return {
     itemCode: row.itemCode || baseSku,
     tileSize: extractTileSize([row.size ?? ""], descriptionText),
+    piecesPerBox: normalizeSingleLineText(row.piecesPerBox),
+    box: normalizeSingleLineText(row.piecesPerBox) ? "Box" : null,
     surfaceFinish: directSurfaceFinishes.length
       ? directSurfaceFinishes
       : extractSurfaceFinishes([row.surface ?? "", row.finish ?? ""], descriptionText),
@@ -1048,9 +1092,7 @@ function metafieldsFromDescriptionRow(
     printTechnology: directPrintTechnologies.length
       ? directPrintTechnologies
       : extractPrintTechnologies(descriptionText),
-    colorTone: directColorTones.length
-      ? removeContainedValues(directColorTones)
-      : extractColorTones(descriptionText),
+    colorTone: directColorTones.length ? directColorTones : extractColorTones(descriptionText),
     waterAbsorption:
       cleanLabeledValue(row.waterAbsorption, "Water absorption") ??
       extractWaterAbsorption(descriptionText),
@@ -1067,8 +1109,18 @@ function metafieldsFromDescriptionRow(
         ),
     suitableFor: extractSuitableForValues(row.suitableFor ?? ""),
     regionAvailability: regionAvailabilityFromPrefixes(availablePrefixes),
-    disclaimer: cleanLabeledValue(row.disclaimer, "Disclaimer"),
+    disclaimer:
+      cleanLabeledValue(row.disclaimer, "Disclaimer") ??
+      defaultDisclaimerForCategory(productCategory),
   };
+}
+
+function defaultDisclaimerForCategory(category: string) {
+  const normalized = category.trim().toLowerCase();
+  if (normalized === "tiles" || normalized === "vinyl") {
+    return "Color of website images may vary slightly from actual products.";
+  }
+  return null;
 }
 
 function regionAvailabilityFromPrefixes(prefixes: RegionalPrefix[]) {
@@ -1113,19 +1165,25 @@ function cleanKnownLabels(value: string | null | undefined) {
 
 function parseDelimitedValues(
   value: string | null | undefined,
-  options: { splitWords?: boolean } = {},
+  options: { splitWords?: boolean; preserveContainedValues?: boolean } = {},
 ) {
   const cleaned = cleanKnownLabels(value);
   if (!cleaned) return [];
   const wordSplit = options.splitWords ? "\\b(?:or|and)\\b|" : "";
   const delimiter = new RegExp(`${wordSplit}[;,/|]+`, "gi");
-  return removeContainedValues(
-    cleaned
-      .replace(delimiter, ";")
-      .split(";")
-      .map((item) => titleCase(item.replace(/\s+/g, " ").trim()))
-      .filter(Boolean),
-  );
+  const values = cleaned
+    .replace(delimiter, ";")
+    .split(";")
+    .map((item) => titleCase(item.replace(/\s+/g, " ").trim()))
+    .filter(Boolean);
+  return options.preserveContainedValues
+    ? uniqueValues(values)
+    : removeContainedValues(values);
+}
+
+function normalizeSingleLineText(value: string | null | undefined) {
+  const cleaned = cleanKnownLabels(value).replace(/\s+/g, " ").trim();
+  return cleaned || null;
 }
 
 function parseWorksheetBoolean(value: string | null | undefined) {
@@ -1648,6 +1706,7 @@ function normalizeTagSet(tags: string[]) {
 function missingMetafieldNames(metafields: ProductMigrationMetafields) {
   const missing: string[] = [];
   if (!metafields.tileSize) missing.push(METAFIELD_KEYS.tileSize);
+  if (!metafields.piecesPerBox) missing.push(METAFIELD_KEYS.piecesPerBox);
   if (metafields.surfaceFinish.length === 0)
     missing.push(METAFIELD_KEYS.surfaceFinish);
   if (metafields.features.length === 0) missing.push(METAFIELD_KEYS.features);
@@ -1677,6 +1736,16 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
           "single_line_text_field",
           metafields.tileSize,
         )
+      : null,
+    metafields.piecesPerBox
+      ? metafieldInput(
+          "pieces_per_box",
+          "single_line_text_field",
+          metafields.piecesPerBox,
+        )
+      : null,
+    metafields.box
+      ? metafieldInput("box", "single_line_text_field", metafields.box)
       : null,
     metafields.surfaceFinish.length
       ? metafieldInput(

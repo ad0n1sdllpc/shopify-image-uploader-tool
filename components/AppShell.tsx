@@ -26,12 +26,16 @@ import UploadProgress from "@/components/UploadProgress";
 import { matchedMediaProducts } from "@/lib/mediaManager";
 import { sortProductsByVariantPrefix } from "@/lib/productOrdering";
 import {
+  DEFAULT_MIGRATION_BATCH_SIZE,
   DEFAULT_REVIEW_BATCH_GROUP_SIZE,
   FALLBACK_SECONDS_PER_PRODUCT,
   batchStatusForSelection,
+  createMigrationBatchPlan,
   createReviewBatchPlan,
   pruneCompletedFolderIds,
+  pruneCompletedMigrationSkus,
   successfulFolderIdsForJob,
+  type MigrationBatchPlan,
   type ReviewBatchPlan,
 } from "@/lib/reviewBatches";
 import {
@@ -98,7 +102,9 @@ type Store = {
   selections: UploadSelection[];
   excludedReviewProductIds: string[];
   completedReviewFolderIds: string[];
+  completedMigrationBaseSkus: string[];
   uploadSecondsPerProduct: number | null;
+  migrationSecondsPerProduct: number | null;
   lastJob: UploadJob | null;
 };
 
@@ -129,7 +135,9 @@ type PersistedStore = {
   }[];
   excludedReviewProductIds: string[];
   completedReviewFolderIds: string[];
+  completedMigrationBaseSkus: string[];
   uploadSecondsPerProduct: number | null;
+  migrationSecondsPerProduct: number | null;
   lastJob: UploadJob | null;
 };
 
@@ -147,7 +155,9 @@ const emptyStore: Store = {
   selections: [],
   excludedReviewProductIds: [],
   completedReviewFolderIds: [],
+  completedMigrationBaseSkus: [],
   uploadSecondsPerProduct: null,
+  migrationSecondsPerProduct: null,
   lastJob: null,
 };
 
@@ -232,7 +242,9 @@ function compactStore(store: Store): PersistedStore {
     })),
     excludedReviewProductIds: store.excludedReviewProductIds,
     completedReviewFolderIds: store.completedReviewFolderIds,
+    completedMigrationBaseSkus: store.completedMigrationBaseSkus,
     uploadSecondsPerProduct: store.uploadSecondsPerProduct,
+    migrationSecondsPerProduct: store.migrationSecondsPerProduct,
     lastJob: null,
   };
 }
@@ -331,7 +343,9 @@ function normalizeStoredStore(
     selections,
     excludedReviewProductIds: saved.excludedReviewProductIds ?? [],
     completedReviewFolderIds: saved.completedReviewFolderIds ?? [],
+    completedMigrationBaseSkus: saved.completedMigrationBaseSkus ?? [],
     uploadSecondsPerProduct: saved.uploadSecondsPerProduct ?? null,
+    migrationSecondsPerProduct: saved.migrationSecondsPerProduct ?? null,
     lastJob: saved.lastJob ?? null,
   };
 }
@@ -488,6 +502,15 @@ export default function AppShell({ page }: { page: PageKey }) {
       ),
     [includedReadySelections, store.completedReviewFolderIds],
   );
+  const migrationBatchPlan = useMemo(
+    () =>
+      createMigrationBatchPlan(
+        migrationSelectedSkus,
+        store.completedMigrationBaseSkus,
+        DEFAULT_MIGRATION_BATCH_SIZE,
+      ),
+    [migrationSelectedSkus, store.completedMigrationBaseSkus],
+  );
   const mediaManagerProducts = useMemo(
     () => matchedMediaProducts(store.matches),
     [store.matches],
@@ -504,6 +527,7 @@ export default function AppShell({ page }: { page: PageKey }) {
     store.matches.length ||
     store.selections.length ||
     store.completedReviewFolderIds.length ||
+    store.completedMigrationBaseSkus.length ||
     store.lastJob,
   );
   const workflowStats = [
@@ -718,6 +742,13 @@ export default function AppShell({ page }: { page: PageKey }) {
       setMigrationScan(response.scan);
       setMigrationSelectedSkus([]);
       setMigrationResults([]);
+      setStore((current) => ({
+        ...current,
+        completedMigrationBaseSkus: pruneCompletedMigrationSkus(
+          current.completedMigrationBaseSkus,
+          selectableSkus,
+        ),
+      }));
       setNotice(
         `${response.scan.candidates.length} eligible regional group(s) found. ${selectableSkus.length} can be selected for migration. ${response.scan.issues.length} duplicate group(s) need manual review.`,
       );
@@ -732,8 +763,17 @@ export default function AppShell({ page }: { page: PageKey }) {
 
   function setMigrationSkuSelected(baseSku: string, selected: boolean) {
     setMigrationSelectedSkus((current) => {
-      if (selected) return Array.from(new Set([...current, baseSku]));
-      return current.filter((item) => item !== baseSku);
+      const nextSkus = selected
+        ? Array.from(new Set([...current, baseSku]))
+        : current.filter((item) => item !== baseSku);
+      setStore((currentStore) => ({
+        ...currentStore,
+        completedMigrationBaseSkus: pruneCompletedMigrationSkus(
+          currentStore.completedMigrationBaseSkus,
+          nextSkus,
+        ),
+      }));
+      return nextSkus;
     });
   }
 
@@ -742,21 +782,35 @@ export default function AppShell({ page }: { page: PageKey }) {
       migrationScan?.candidates
         .filter((candidate) => !candidate.existingUnifiedProductId)
         .map((candidate) => candidate.baseSku) ?? [];
-    setMigrationSelectedSkus(selected ? selectableSkus : []);
+    const nextSkus = selected ? selectableSkus : [];
+    setMigrationSelectedSkus(nextSkus);
+    setStore((current) => ({
+      ...current,
+      completedMigrationBaseSkus: pruneCompletedMigrationSkus(
+        current.completedMigrationBaseSkus,
+        nextSkus,
+      ),
+    }));
   }
 
   async function runProductMigrationCandidates() {
-    if (migrationSelectedSkus.length === 0) {
-      setNotice("No migration SKU is selected.");
+    const batchSkus = migrationBatchPlan.currentBatchSkus;
+    if (batchSkus.length === 0) {
+      setNotice(
+        migrationSelectedSkus.length === 0
+          ? "No migration SKU is selected."
+          : "No migration SKU remains in the current batch.",
+      );
       return;
     }
 
     setBusy(true);
     setError(null);
     setNotice(null);
+    const startedAt = Date.now();
     setMigrationProgress({
       startedAt: Date.now(),
-      total: migrationSelectedSkus.length,
+      total: batchSkus.length,
       now: Date.now(),
     });
     try {
@@ -765,12 +819,31 @@ export default function AppShell({ page }: { page: PageKey }) {
         {
           method: "POST",
           body: migrationRunFormData(
-            migrationSelectedSkus,
+            batchSkus,
             migrationDescriptionWorkbook,
           ),
         },
       );
-      setMigrationResults(response.results);
+      setMigrationResults((current) =>
+        mergeMigrationResults(current, response.results),
+      );
+      const completedSkus = response.results
+        .filter((result) => result.status !== "failed")
+        .map((result) => result.baseSku);
+      setStore((current) => ({
+        ...current,
+        completedMigrationBaseSkus: Array.from(
+          new Set([...current.completedMigrationBaseSkus, ...completedSkus]),
+        ),
+        migrationSecondsPerProduct: response.results.length
+          ? Math.max(
+              1,
+              Math.round(
+                (Date.now() - startedAt) / 1000 / response.results.length,
+              ),
+            )
+          : current.migrationSecondsPerProduct,
+      }));
       const createdCount = response.results.filter(
         (result) => result.newProductGid,
       ).length;
@@ -785,7 +858,7 @@ export default function AppShell({ page }: { page: PageKey }) {
         .map((result) => `${result.baseSku}: ${result.error}`);
       setNotice(
         [
-          `${createdCount} active product(s) created. ${failedCount} failed. ${skippedCount} skipped.`,
+          `Batch ${migrationBatchPlan.currentBatchNumber} finished: ${createdCount} active product(s) created. ${failedCount} failed. ${skippedCount} skipped.`,
           ...failedErrors.slice(0, 3),
         ].join(" "),
       );
@@ -797,6 +870,21 @@ export default function AppShell({ page }: { page: PageKey }) {
       setMigrationProgress(null);
       setBusy(false);
     }
+  }
+
+  function markMigrationBatchDone(baseSkus: string[]) {
+    setStore((current) => ({
+      ...current,
+      completedMigrationBaseSkus: Array.from(
+        new Set([...current.completedMigrationBaseSkus, ...baseSkus]),
+      ),
+    }));
+    setNotice(`${baseSkus.length} migration SKU(s) marked complete.`);
+  }
+
+  function resetMigrationBatchProgress() {
+    setStore((current) => ({ ...current, completedMigrationBaseSkus: [] }));
+    setNotice("Migration batch progress reset. Selected SKUs were not changed.");
   }
 
   async function deleteSelectedMedia(items: MediaDeleteRequestItem[]) {
@@ -1232,14 +1320,20 @@ export default function AppShell({ page }: { page: PageKey }) {
               busy={busy}
               scan={migrationScan}
               selectedSkus={migrationSelectedSkus}
+              batchPlan={migrationBatchPlan}
               results={migrationResults}
               progress={migrationProgress}
+              secondsPerProduct={
+                store.migrationSecondsPerProduct ?? FALLBACK_SECONDS_PER_PRODUCT
+              }
               descriptionWorkbook={migrationDescriptionWorkbook}
               onDescriptionWorkbookChange={setMigrationDescriptionWorkbook}
               onScan={scanProductMigrationCandidates}
               onRun={runProductMigrationCandidates}
               onToggleSku={setMigrationSkuSelected}
               onSetAll={setAllMigrationSkus}
+              onMarkBatchDone={markMigrationBatchDone}
+              onResetBatchProgress={resetMigrationBatchProgress}
             />
           ) : (
             <HistoryPage history={history} refresh={loadHistory} />
@@ -1922,26 +2016,34 @@ function MigrationPage({
   busy,
   scan,
   selectedSkus,
+  batchPlan,
   results,
   progress,
+  secondsPerProduct,
   descriptionWorkbook,
   onDescriptionWorkbookChange,
   onScan,
   onRun,
   onToggleSku,
   onSetAll,
+  onMarkBatchDone,
+  onResetBatchProgress,
 }: {
   busy: boolean;
   scan: ProductMigrationScanResult | null;
   selectedSkus: string[];
+  batchPlan: MigrationBatchPlan;
   results: ProductMigrationRunResult[];
   progress: MigrationProgress | null;
+  secondsPerProduct: number;
   descriptionWorkbook: File | null;
   onDescriptionWorkbookChange: (file: File | null) => void;
   onScan: () => void;
   onRun: () => void;
   onToggleSku: (baseSku: string, selected: boolean) => void;
   onSetAll: (selected: boolean) => void;
+  onMarkBatchDone: (baseSkus: string[]) => void;
+  onResetBatchProgress: () => void;
 }) {
   const selectableCandidates =
     scan?.candidates.filter(
@@ -1954,6 +2056,12 @@ function MigrationPage({
   const allSelected =
     selectableCandidates.length > 0 &&
     selectedCount === selectableCandidates.length;
+  const currentBatchEstimate = formatDuration(
+    batchPlan.currentSkuCount * secondsPerProduct,
+  );
+  const remainingEstimate = formatDuration(
+    batchPlan.remainingSkuCount * secondsPerProduct,
+  );
   const progressElapsedSeconds = progress
     ? Math.max(0, Math.floor((progress.now - progress.startedAt) / 1000))
     : 0;
@@ -2011,12 +2119,12 @@ function MigrationPage({
             </button>
             <button
               type="button"
-              disabled={busy || selectedSkus.length === 0}
+              disabled={busy || batchPlan.currentBatchSkus.length === 0}
               onClick={onRun}
               className="admin-button-primary"
             >
               <PackagePlus size={17} />
-              Create selected drafts
+              Create current batch
             </button>
           </div>
         </div>
@@ -2050,6 +2158,81 @@ function MigrationPage({
                 ).length
               }
             />
+          </div>
+        ) : null}
+        {scan ? (
+          <div className="mt-3 grid gap-2 md:grid-cols-4">
+            <div className="admin-panel px-3 py-2">
+              <p className="text-xs font-semibold uppercase admin-muted">
+                Current batch
+              </p>
+              <p className="mt-1 text-sm font-semibold">
+                Batch {batchPlan.currentBatchNumber} of{" "}
+                {batchPlan.totalBatchCount || 0}
+              </p>
+              <p className="text-xs admin-muted">
+                {batchPlan.currentSkuCount} SKU(s)
+              </p>
+            </div>
+            <div className="admin-panel px-3 py-2">
+              <p className="text-xs font-semibold uppercase admin-muted">
+                Remaining
+              </p>
+              <p className="mt-1 text-sm font-semibold">
+                {batchPlan.remainingSkuCount} SKU(s)
+              </p>
+              <p className="text-xs admin-muted">
+                {batchPlan.uploadedSkuCount} SKU(s) complete
+              </p>
+            </div>
+            <div className="admin-panel px-3 py-2">
+              <p className="text-xs font-semibold uppercase admin-muted">
+                Estimated current
+              </p>
+              <p className="mt-1 text-sm font-semibold">
+                {currentBatchEstimate}
+              </p>
+              <p className="text-xs admin-muted">
+                {secondsPerProduct}s/SKU estimate
+              </p>
+            </div>
+            <div className="admin-panel px-3 py-2">
+              <p className="text-xs font-semibold uppercase admin-muted">
+                Estimated remaining
+              </p>
+              <p className="mt-1 text-sm font-semibold">
+                {remainingEstimate}
+              </p>
+              <p className="text-xs admin-muted">Based on selected SKUs</p>
+            </div>
+          </div>
+        ) : null}
+        {scan ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || batchPlan.currentBatchSkus.length === 0}
+              onClick={() => onMarkBatchDone(batchPlan.currentBatchSkus)}
+              className="admin-button-primary"
+            >
+              Next batch
+            </button>
+            <button
+              type="button"
+              disabled={busy || batchPlan.currentBatchSkus.length === 0}
+              onClick={() => onMarkBatchDone(batchPlan.currentBatchSkus)}
+              className="admin-button"
+            >
+              Mark current batch done
+            </button>
+            <button
+              type="button"
+              disabled={busy || batchPlan.uploadedSkuCount === 0}
+              onClick={onResetBatchProgress}
+              className="admin-button"
+            >
+              Reset migration progress
+            </button>
           </div>
         ) : null}
       </section>
@@ -2087,7 +2270,8 @@ function MigrationPage({
               <h2 className="text-base font-semibold">Eligible product sets</h2>
               <p className="text-sm admin-muted">
                 {selectedCount} of {selectableCandidates.length} selectable
-                SKU(s) checked
+                SKU(s) checked. Current batch has{" "}
+                {batchPlan.currentSkuCount} SKU(s).
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2132,6 +2316,10 @@ function MigrationPage({
                       key={candidate.baseSku}
                       candidate={candidate}
                       selected={selectedSet.has(candidate.baseSku)}
+                      batchStatus={migrationCandidateBatchStatus(
+                        candidate.baseSku,
+                        batchPlan,
+                      )}
                       busy={busy}
                       onToggle={onToggleSku}
                     />
@@ -2277,16 +2465,18 @@ function MetricPanel({ label, value }: { label: string; value: number }) {
 function MigrationCandidateRow({
   candidate,
   selected,
+  batchStatus,
   busy,
   onToggle,
 }: {
   candidate: ProductMigrationCandidate;
   selected: boolean;
+  batchStatus: MigrationCandidateBatchStatus;
   busy: boolean;
   onToggle: (baseSku: string, selected: boolean) => void;
 }) {
   const disabled = busy || Boolean(candidate.existingUnifiedProductId);
-  const migrationMetafieldCount = 15;
+  const migrationMetafieldCount = 17;
   const populatedMetafields =
     migrationMetafieldCount - candidate.missingFields.length;
 
@@ -2314,6 +2504,9 @@ function MigrationCandidateRow({
             Existing unified product
           </p>
         ) : null}
+        <span className={migrationBatchStatusClass(batchStatus)}>
+          {migrationBatchStatusLabel(batchStatus)}
+        </span>
       </td>
       <td className="px-3 py-3 text-xs">
         <div className="grid gap-1">
@@ -2393,6 +2586,54 @@ function migrationStatusClass(status: ProductMigrationRunResult["status"]) {
   if (status === "skipped")
     return "admin-badge bg-mist text-subdued dark:bg-white/10 dark:text-white/65";
   return "admin-badge bg-clay/10 text-clay dark:bg-clay/20 dark:text-[#ffb39d]";
+}
+
+type MigrationCandidateBatchStatus =
+  | "complete"
+  | "current"
+  | "waiting"
+  | "not_selected";
+
+function migrationCandidateBatchStatus(
+  baseSku: string,
+  plan: MigrationBatchPlan,
+): MigrationCandidateBatchStatus {
+  if (plan.uploadedSkus.includes(baseSku)) return "complete";
+  if (plan.currentBatchSkus.includes(baseSku)) return "current";
+  if (plan.waitingSkus.includes(baseSku)) return "waiting";
+  return "not_selected";
+}
+
+function migrationBatchStatusLabel(status: MigrationCandidateBatchStatus) {
+  if (status === "complete") return "Complete";
+  if (status === "current") return "Current batch";
+  if (status === "waiting") return "Waiting";
+  return "Not selected";
+}
+
+function migrationBatchStatusClass(status: MigrationCandidateBatchStatus) {
+  if (status === "complete")
+    return "admin-badge mt-2 bg-moss/10 text-moss dark:bg-[#0f3a2f] dark:text-[#8fd6bc]";
+  if (status === "current")
+    return "admin-badge mt-2 bg-blue-100 text-blue-800 dark:bg-blue-300/20 dark:text-blue-200";
+  if (status === "waiting")
+    return "admin-badge mt-2 bg-mist text-subdued dark:bg-white/10 dark:text-white/65";
+  return "admin-badge mt-2 bg-line text-subdued dark:bg-white/5 dark:text-white/45";
+}
+
+function mergeMigrationResults(
+  current: ProductMigrationRunResult[],
+  next: ProductMigrationRunResult[],
+) {
+  const resultsBySku = new Map(
+    current.map((result) => [result.baseSku.toUpperCase(), result]),
+  );
+  for (const result of next) {
+    resultsBySku.set(result.baseSku.toUpperCase(), result);
+  }
+  return Array.from(resultsBySku.values()).sort((first, second) =>
+    first.baseSku.localeCompare(second.baseSku),
+  );
 }
 
 function migrationDescriptionDataLabel(
