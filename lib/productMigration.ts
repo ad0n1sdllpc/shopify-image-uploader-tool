@@ -1,6 +1,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import zlib from "node:zlib";
+import migrationTaxonomy from "@/lib/migrationTaxonomy.json";
 import { shopifyGraphql } from "@/lib/shopify";
 import type {
   ProductMigrationCandidate,
@@ -40,6 +41,7 @@ const METAFIELD_KEYS = {
   itemCode: "custom.item_code",
   tileSize: "custom.tile_size",
   surfaceFinish: "custom.surface_finish",
+  features: "custom.features",
   materialType: "custom.material_type",
   printTechnology: "custom.print_technology",
   colorTone: "custom.color_tone",
@@ -135,6 +137,7 @@ export type ProductMigrationDescriptionRow = {
   size: string | null;
   category: string | null;
   description: string | null;
+  features: string | null;
   finish: string | null;
   application: string | null;
   suitableFor: string | null;
@@ -663,6 +666,7 @@ export function extractMigrationMetafields(
     itemCode: baseSku,
     tileSize: extractTileSize(tags, searchableText),
     surfaceFinish: extractSurfaceFinishes(tags, searchableText),
+    features: extractFeatures(searchableText),
     materialType: extractMaterialTypes(productDescription),
     printTechnology: extractPrintTechnologies(productDescription),
     colorTone: extractColorTones(productDescription),
@@ -879,12 +883,18 @@ function cellValue(
 function descriptionRowFromWorksheetRow(
   row: Record<string, unknown>,
 ): ProductMigrationDescriptionRow {
+  const finish = nullableWorksheetString(row, "Finish");
+  const features =
+    nullableWorksheetString(row, "Features") ??
+    (finish && /^features\s*:/i.test(finish) ? finish : null);
+
   return {
     itemCode: worksheetString(row, "Item Code"),
     size: nullableWorksheetString(row, "SIZE"),
     category: nullableWorksheetString(row, "Category"),
     description: nullableWorksheetString(row, "Description"),
-    finish: nullableWorksheetString(row, "Finish"),
+    features,
+    finish: features === finish ? null : finish,
     application: nullableWorksheetString(row, "Application"),
     suitableFor: nullableWorksheetString(row, "Suitable For"),
     surface: nullableWorksheetString(row, "Surface"),
@@ -953,6 +963,7 @@ function metafieldsFromDescriptionRow(
   );
   const descriptionText = [
     row.description,
+    row.features,
     row.finish,
     row.application,
     row.suitableFor,
@@ -969,6 +980,7 @@ function metafieldsFromDescriptionRow(
       [row.surface ?? "", row.finish ?? ""],
       descriptionText,
     ),
+    features: extractFeatures(descriptionText),
     materialType: extractMaterialTypes(descriptionText),
     printTechnology: extractPrintTechnologies(descriptionText),
     colorTone: extractColorTones(descriptionText),
@@ -1461,6 +1473,7 @@ function missingMetafieldNames(metafields: ProductMigrationMetafields) {
   if (!metafields.tileSize) missing.push(METAFIELD_KEYS.tileSize);
   if (metafields.surfaceFinish.length === 0)
     missing.push(METAFIELD_KEYS.surfaceFinish);
+  if (metafields.features.length === 0) missing.push(METAFIELD_KEYS.features);
   if (metafields.materialType.length === 0)
     missing.push(METAFIELD_KEYS.materialType);
   if (metafields.printTechnology.length === 0)
@@ -1493,6 +1506,13 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
           "surface_finish",
           "list.single_line_text_field",
           listMetafieldValue(metafields.surfaceFinish),
+        )
+      : null,
+    metafields.features.length
+      ? metafieldInput(
+          "features",
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.features),
         )
       : null,
     metafields.materialType.length
@@ -1902,95 +1922,34 @@ function extractTileSize(tags: string[], text: string) {
 }
 
 function extractSurfaceFinishes(tags: string[], text: string) {
-  const finishes = [
-    "Semi Polished",
-    "Polished",
-    "Matte",
-    "Matt",
-    "Glossy",
-    "High Gloss",
-    "Glazed",
-    "Unglazed",
-    "Textured",
-    "Structured",
-    "Rustic",
-    "Satin",
-    "Lappato",
-    "Honed",
-  ];
-  return extractKnownValues([...tags, text], finishes).map((finish) =>
-    finish === "Matt" ? "Matte" : finish,
-  ).filter(
-    (finish, _index, allFinishes) =>
-      !allFinishes.some(
-        (other) => other !== finish && other.includes(finish),
-      ),
-  );
-}
-
-function extractColorTones(text: string) {
-  const normalized = text.replace(/\bgrey\b/gi, "gray");
-  const colorWords = [
-    "White",
-    "Black",
-    "Gray",
-    "Beige",
-    "Brown",
-    "Blue",
-    "Green",
-    "Red",
-    "Pink",
-    "Yellow",
-    "Cream",
-    "Ivory",
-    "Gold",
-    "Silver",
-    "Charcoal",
-  ];
-  const modifiers = ["Dark", "Light", "Warm", "Cool", "Medium"];
-  const found: string[] = [];
-
-  for (const color of colorWords) {
-    for (const modifier of modifiers) {
-      if (
-        new RegExp(
-          `\\b${escapeRegExp(modifier)}\\s+${escapeRegExp(color)}\\b`,
-          "i",
-        ).test(normalized)
-      )
-        found.push(`${modifier} ${color}`);
-    }
-    if (new RegExp(`\\b${escapeRegExp(color)}\\b`, "i").test(normalized))
-      found.push(color);
-  }
-
-  return uniqueValues(
-    found.filter(
-      (value) =>
-        !found.some(
-          (other) => other !== value && other.endsWith(` ${value}`),
-        ),
+  return removeContainedValues(
+    extractKnownValues([...tags, text], migrationTaxonomy.surface_finish).map(
+      (finish) =>
+        finish === "Matt" ? "Matte" : finish.replace(/\bGrey\b/g, "Gray"),
     ),
   );
 }
 
-function extractMaterialTypes(text: string) {
-  return extractKnownValues(
-    [text],
-    [
-      "Porcelain",
-      "Ceramic",
-      "Homogeneous",
-      "Vinyl",
-      "Granite",
-      "Marble",
-      "Stoneware",
-      "Terracotta",
-    ],
+function extractColorTones(text: string) {
+  return removeContainedValues(
+    extractKnownValues([text], migrationTaxonomy.color_tone).map((color) =>
+      color.replace(/\bGrey\b/g, "Gray"),
+    ),
   );
 }
 
+function extractFeatures(text: string) {
+  return extractMappedValues([text], migrationTaxonomy.features);
+}
+
+function extractMaterialTypes(text: string) {
+  return extractKnownValues([text], migrationTaxonomy.material_type);
+}
+
 function extractPrintTechnologies(text: string) {
+  const mapped = extractMappedValues([text], migrationTaxonomy.print_technology);
+  if (mapped.length) return mapped;
+
   const matches = text.match(/\b(?:HD\s*)?(?:Inkjet|Digital)\s+Print(?:ing)?\b/gi);
   return uniqueValues(
     (matches ?? []).map((match) => titleCase(match.replace(/\s+/g, " "))),
@@ -2002,6 +1961,11 @@ function extractWaterAbsorption(text: string) {
     /water\s*absorption[^A-Za-z0-9<>≤=]*(E?\s*[<≤=]\s*\d+(?:\.\d+)?\s*%)/i,
   );
   if (explicit) return normalizeWaterAbsorption(explicit[1]);
+
+  const reverse = text.match(
+    /\b(E?\s*(?:[<≤=]\s*)?\d+(?:\.\d+)?\s*%)\s*water\s*absorption\b/i,
+  );
+  if (reverse) return normalizeWaterAbsorption(reverse[1]);
 
   const compact = text.match(/\bE\s*[<≤=]\s*\d+(?:\.\d+)?\s*%/i);
   return compact ? normalizeWaterAbsorption(compact[0]) : null;
@@ -2019,6 +1983,9 @@ function extractThicknessMm(text: string) {
 }
 
 function extractTrafficRatings(text: string) {
+  const mapped = extractMappedValues([text], migrationTaxonomy.traffic_rating);
+  if (mapped.length) return mapped;
+
   const explicit = text.match(
     /traffic\s*(?:rating|grade)?[^A-Za-z]*(light|moderate|medium|heavy|commercial|residential)/i,
   );
@@ -2108,6 +2075,29 @@ function extractKnownValues(sources: string[], values: string[]) {
   }
 
   return uniqueValues(found);
+}
+
+function extractMappedValues(
+  sources: string[],
+  values: { phrase: string; value: string }[],
+) {
+  const found: string[] = [];
+  for (const source of sources) {
+    for (const entry of values) {
+      if (new RegExp(`\\b${escapeRegExp(entry.phrase)}\\b`, "i").test(source))
+        found.push(entry.value);
+    }
+  }
+
+  return removeContainedValues(found);
+}
+
+function removeContainedValues(values: string[]) {
+  const unique = uniqueValues(values);
+  return unique.filter(
+    (value) =>
+      !unique.some((other) => other !== value && other.includes(value)),
+  );
 }
 
 function uniqueValues(values: string[]) {

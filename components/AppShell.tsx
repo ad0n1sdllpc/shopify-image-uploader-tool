@@ -2212,7 +2212,7 @@ function MigrationCandidateRow({
   onToggle: (baseSku: string, selected: boolean) => void;
 }) {
   const disabled = busy || Boolean(candidate.existingUnifiedProductId);
-  const migrationMetafieldCount = 14;
+  const migrationMetafieldCount = 15;
   const populatedMetafields =
     migrationMetafieldCount - candidate.missingFields.length;
 

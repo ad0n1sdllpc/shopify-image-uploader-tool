@@ -91,6 +91,7 @@ function workbookBuffer(rows: Record<string, string>[]) {
     "SIZE",
     "Category",
     "Description",
+    "Features",
     "Finish",
     "Application",
     "Suitable For",
@@ -264,6 +265,7 @@ describe("product migration metafield extraction", () => {
       itemCode: "YM6623",
       tileSize: "60x60 cm",
       surfaceFinish: ["Polished"],
+      features: ["Rectified"],
       materialType: ["Porcelain"],
       printTechnology: ["Inkjet Print"],
       colorTone: [],
@@ -283,6 +285,7 @@ describe("product migration metafield extraction", () => {
       itemCode: "YM6623",
       tileSize: "60x60 cm",
       surfaceFinish: ["Polished"],
+      features: [],
       materialType: ["Porcelain"],
       printTechnology: ["Inkjet Print"],
       colorTone: [],
@@ -382,6 +385,7 @@ describe("product migration Excel description enrichment", () => {
       itemCode: "YM6623",
       tileSize: "60x60 cm",
       surfaceFinish: ["Matte", "Glossy"],
+      features: ["Rectified"],
       materialType: ["Porcelain"],
       printTechnology: ["Inkjet Print"],
       colorTone: [],
@@ -411,6 +415,8 @@ describe("product migration Excel description enrichment", () => {
           Category: "Category: Tiles",
           Description:
             "Description: 60x60cm Dark Gray Concrete Look Large Square Tile With Semi Polished Surface",
+          Features:
+            "Features: Stain Resistant, Non Water Appearance, Glazed, 0.07% Water Absorption ,Good for High Traffic Areas, 9.5mm Thickness, Inkjet Print Technology, Rectified,",
           Application: "Application: Floor or wall / Indoor",
           "Suitable For":
             "Suitable For: living rooms, bedrooms, bathrooms, kitchens, dining room, hallways churches, hospitals, offices, shopping malls, hotels, condominiums, restaurants and airports",
@@ -430,7 +436,20 @@ describe("product migration Excel description enrichment", () => {
       "<p>60x60cm Dark Gray Concrete Look Large Square Tile With Semi Polished Surface</p>",
     );
     expect(candidate.metafields.surfaceFinish).toEqual(["Semi Polished"]);
+    expect(candidate.metafields.features).toEqual([
+      "Stain Resistant",
+      "Non Water Appearance",
+      "Glazed",
+      "Rectified",
+      "Inkjet Print Technology",
+    ]);
     expect(candidate.metafields.colorTone).toEqual(["Dark Gray"]);
+    expect(candidate.metafields.waterAbsorption).toBe("0.07%");
+    expect(candidate.metafields.trafficRating).toEqual(["High"]);
+    expect(candidate.metafields.materialType).toEqual([]);
+    expect(candidate.metafields.printTechnology).toEqual(["Inkjet Print"]);
+    expect(candidate.metafields.thicknessMm).toBe(9.5);
+    expect(candidate.metafields.rectified).toBe(true);
     expect(candidate.metafields.applicationArea).toEqual([
       "Floor",
       "Wall",
@@ -457,6 +476,20 @@ describe("product migration Excel description enrichment", () => {
     );
     expect(
       metafieldInputs(candidate.metafields).find(
+        (input) => input.key === "features",
+      ),
+    ).toMatchObject({
+      type: "list.single_line_text_field",
+      value: JSON.stringify([
+        "Stain Resistant",
+        "Non Water Appearance",
+        "Glazed",
+        "Rectified",
+        "Inkjet Print Technology",
+      ]),
+    });
+    expect(
+      metafieldInputs(candidate.metafields).find(
         (input) => input.key === "disclaimer",
       ),
     ).toMatchObject({
@@ -468,6 +501,41 @@ describe("product migration Excel description enrichment", () => {
         (input) => input.key === "product_description",
       ),
     ).toBe(false);
+  });
+
+  it("recognizes taxonomy phrases from both description and features", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "YM6623",
+          SIZE: "Tiles - 60x60 CM",
+          Category: "Category: Tiles",
+          Description:
+            "Description: Light Gray Porcelain tile with Semi Polished surface and Stain Resistant finish",
+          Features:
+            "Features: Digital Print Technology, Good for High Traffic Areas, 0.07% Water Absorption",
+          Application: "Application: Floor / Indoor",
+          Surface: "Surface: Semi Polished",
+          Disclaimer: "Disclaimer: Color may vary.",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan(
+      [product("LUZ"), product("VIS"), product("MIN")],
+      { descriptionCatalog: catalog },
+    );
+    const metafields = scan.candidates[0].metafields;
+
+    expect(metafields.surfaceFinish).toEqual(["Semi Polished"]);
+    expect(metafields.colorTone).toEqual(["Light Gray"]);
+    expect(metafields.materialType).toEqual(["Porcelain"]);
+    expect(metafields.features).toEqual([
+      "Stain Resistant",
+      "Digital Print Technology",
+    ]);
+    expect(metafields.printTechnology).toEqual(["Digital Print"]);
+    expect(metafields.trafficRating).toEqual(["High"]);
+    expect(metafields.waterAbsorption).toBe("0.07%");
   });
 
   it("matches regional title fallback to Excel item code", () => {

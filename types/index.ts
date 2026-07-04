@@ -53,6 +53,7 @@ export type ProductMigrationMetafields = {
   itemCode: string;
   tileSize: string | null;
   surfaceFinish: string[];
+  features: string[];
   materialType: string[];
   printTechnology: string[];
   colorTone: string[];
