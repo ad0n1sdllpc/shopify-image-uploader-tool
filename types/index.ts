@@ -52,16 +52,18 @@ export type ProductMigrationLocationName = "Lusterplus Inc." | "ARTEMISIA CEBU" 
 export type ProductMigrationMetafields = {
   itemCode: string;
   tileSize: string | null;
-  surfaceFinish: string | null;
-  materialType: string | null;
-  printTechnology: string | null;
+  surfaceFinish: string[];
+  materialType: string[];
+  printTechnology: string[];
+  colorTone: string[];
   waterAbsorption: string | null;
   thicknessMm: number | null;
   rectified: boolean;
-  trafficRating: string | null;
-  applicationArea: string | null;
+  trafficRating: string[];
+  applicationArea: string[];
+  suitableFor: string[];
   regionAvailability: string[];
-  productDescription: string;
+  disclaimer: string | null;
 };
 
 export type ProductMigrationRegionalProduct = {
@@ -86,6 +88,13 @@ export type ProductMigrationCandidate = {
   missingFields: string[];
   manualReviewFields: string[];
   existingUnifiedProductId: string | null;
+  descriptionDataStatus: "not_provided" | "matched" | "missing" | "warning";
+  descriptionDataWarnings: string[];
+  descriptionDataSource: {
+    itemCode: string;
+    size: string | null;
+    category: string | null;
+  } | null;
 };
 
 export type ProductMigrationIssue = {

@@ -1,5 +1,6 @@
 import "server-only";
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 import { shopifyGraphql } from "@/lib/shopify";
 import type {
   ProductMigrationCandidate,
@@ -41,13 +42,15 @@ const METAFIELD_KEYS = {
   surfaceFinish: "custom.surface_finish",
   materialType: "custom.material_type",
   printTechnology: "custom.print_technology",
+  colorTone: "custom.color_tone",
   waterAbsorption: "custom.water_absorption",
   thicknessMm: "custom.thickness_mm",
   rectified: "custom.rectified",
   trafficRating: "custom.traffic_rating",
   applicationArea: "custom.application_area",
+  suitableFor: "custom.suitable_for",
   regionAvailability: "custom.region_availability",
-  productDescription: "custom.product_description",
+  disclaimer: "custom.disclaimer",
 } as const;
 
 type ShopifyUserError = {
@@ -127,6 +130,49 @@ type RegionalProductIdentity = {
   sku: string;
 };
 
+export type ProductMigrationDescriptionRow = {
+  itemCode: string;
+  size: string | null;
+  category: string | null;
+  description: string | null;
+  finish: string | null;
+  application: string | null;
+  suitableFor: string | null;
+  surface: string | null;
+  disclaimer: string | null;
+};
+
+export type ProductMigrationDescriptionCatalog = {
+  rowsByItemCode: Map<string, ProductMigrationDescriptionRow>;
+  duplicateItemCodes: Set<string>;
+};
+
+export type ProductMigrationBuildOptions = {
+  descriptionCatalog?: ProductMigrationDescriptionCatalog | null;
+};
+
+type PublicationNode = {
+  id: string;
+  name: string;
+};
+
+type PublicationsResponse = {
+  publications: {
+    nodes: PublicationNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+};
+
+type PublishablePublishResponse = {
+  publishablePublish: {
+    publishable: {
+      availablePublicationsCount: { count: number };
+      resourcePublicationsCount: { count: number };
+    } | null;
+    userErrors: ShopifyUserError[];
+  };
+};
+
 type ProductCreateResponse = {
   productCreate: {
     product: {
@@ -138,7 +184,12 @@ type ProductCreateResponse = {
         nodes: {
           id: string;
           price: string;
-          inventoryItem: { id: string; sku: string | null; tracked: boolean; requiresShipping: boolean };
+          inventoryItem: {
+            id: string;
+            sku: string | null;
+            tracked: boolean;
+            requiresShipping: boolean;
+          };
         }[];
       };
       metafields: {
@@ -178,6 +229,30 @@ type MigrationProductIndexResponse = {
 type MigrationProductSourceDetailsResponse = {
   product: MigrationProductNode | null;
 };
+
+const PUBLICATIONS_QUERY = `
+  query MigrationPublications($cursor: String) {
+    publications(first: 100, after: $cursor) {
+      nodes {
+        id
+        name
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const PUBLISHABLE_PUBLISH_MUTATION = `
+  mutation PublishUnifiedMigrationProduct($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) {
+      publishable {
+        availablePublicationsCount { count }
+        resourcePublicationsCount { count }
+      }
+      userErrors { field message }
+    }
+  }
+`;
 
 type MigrationProductDetailsResponse = {
   product: {
@@ -426,41 +501,22 @@ const PRODUCT_DETAILS_QUERY = `
   }
 `;
 
-type MigrationProductsResponse = {
-  products: {
-    nodes: MigrationProductNode[];
-    pageInfo: { hasNextPage: boolean; endCursor: string | null };
-  };
-};
-
-type MigrationLocationsResponse = {
-  locations: {
-    nodes: { id: string; name: string }[];
-    pageInfo: { hasNextPage: boolean; endCursor: string | null };
-  };
-};
-
-type MigrationProductIndexResponse = {
-  products: {
-    nodes: MigrationProductIndexNode[];
-    pageInfo: { hasNextPage: boolean; endCursor: string | null };
-  };
-};
-
-type MigrationProductSourceDetailsResponse = {
-  product: MigrationProductNode | null;
-};
-
-export async function scanProductMigrations(): Promise<ProductMigrationScanResult> {
+export async function scanProductMigrations(
+  descriptionWorkbook?: Buffer | null,
+): Promise<ProductMigrationScanResult> {
   const products = await fetchMigrationProducts([]);
+  const descriptionCatalog = descriptionWorkbook
+    ? parseMigrationDescriptionWorkbook(descriptionWorkbook)
+    : null;
   return {
     scannedAt: new Date().toISOString(),
-    ...buildProductMigrationScan(products),
+    ...buildProductMigrationScan(products, { descriptionCatalog }),
   };
 }
 
 export async function migrateRegionalProducts(
   baseSkus: string[],
+  descriptionWorkbook?: Buffer | null,
 ): Promise<ProductMigrationRunResult[]> {
   const normalizedBaseSkus = baseSkus
     .map((baseSku) => baseSku.trim().toUpperCase())
@@ -468,8 +524,12 @@ export async function migrateRegionalProducts(
   if (normalizedBaseSkus.length === 0) return [];
 
   const products = await fetchMigrationProducts(normalizedBaseSkus);
+  const descriptionCatalog = descriptionWorkbook
+    ? parseMigrationDescriptionWorkbook(descriptionWorkbook)
+    : null;
   const locationsByName = await fetchLocationsByName();
-  const scan = buildProductMigrationScan(products);
+  const publicationIds = await fetchPublicationIds();
+  const scan = buildProductMigrationScan(products, { descriptionCatalog });
   const candidatesBySku = new Map(
     scan.candidates.map((candidate) => [
       candidate.baseSku.toUpperCase(),
@@ -495,7 +555,9 @@ export async function migrateRegionalProducts(
       continue;
     }
 
-    results.push(await migrateProductCandidate(candidate, locationsByName));
+    results.push(
+      await migrateProductCandidate(candidate, locationsByName, publicationIds),
+    );
   }
 
   return results;
@@ -503,6 +565,7 @@ export async function migrateRegionalProducts(
 
 export function buildProductMigrationScan(
   products: MigrationProductNode[],
+  options: ProductMigrationBuildOptions = {},
 ): Omit<ProductMigrationScanResult, "scannedAt"> {
   const sourceProducts: MigrationSourceProduct[] = [];
   const existingUnifiedProductsBySku = new Map<string, string>();
@@ -573,6 +636,7 @@ export function buildProductMigrationScan(
       baseSku,
       productsInOrder,
       existingUnifiedProductsBySku.get(baseSku) ?? null,
+      options.descriptionCatalog ?? null,
     );
     candidates.push(candidate);
   }
@@ -598,18 +662,20 @@ export function extractMigrationMetafields(
   return {
     itemCode: baseSku,
     tileSize: extractTileSize(tags, searchableText),
-    surfaceFinish: extractSurfaceFinish(tags, searchableText),
-    materialType: extractMaterialType(productDescription),
-    printTechnology: extractPrintTechnology(productDescription),
+    surfaceFinish: extractSurfaceFinishes(tags, searchableText),
+    materialType: extractMaterialTypes(productDescription),
+    printTechnology: extractPrintTechnologies(productDescription),
+    colorTone: extractColorTones(productDescription),
     waterAbsorption: extractWaterAbsorption(productDescription),
     thicknessMm: extractThicknessMm(productDescription),
     rectified: /\brectified\b/i.test(productDescription),
-    trafficRating: extractTrafficRating(productDescription),
-    applicationArea: extractApplicationArea(tags),
+    trafficRating: extractTrafficRatings(productDescription),
+    applicationArea: extractApplicationAreas(tags.join("; ")),
+    suitableFor: [],
     regionAvailability: regionalPrefixes.map(
       (prefix) => regionAvailabilityByPrefix[prefix],
     ),
-    productDescription,
+    disclaimer: null,
   };
 }
 
@@ -630,9 +696,331 @@ export function plainTextFromHtml(descriptionHtml: string) {
     .trim();
 }
 
+export function parseMigrationDescriptionWorkbook(
+  workbookBuffer: Buffer,
+): ProductMigrationDescriptionCatalog {
+  const files = unzipWorkbookFiles(workbookBuffer);
+  const sharedStrings = parseSharedStrings(files.get("xl/sharedStrings.xml"));
+  const sheetPath = firstWorksheetPath(files);
+  const sheetXml = files.get(sheetPath);
+  if (!sheetXml) throw new Error("Description workbook has no worksheet data.");
+
+  const rows = worksheetRows(sheetXml, sharedStrings);
+  const rowsByItemCode = new Map<string, ProductMigrationDescriptionRow>();
+  const duplicateItemCodes = new Set<string>();
+
+  for (const rawRow of rows) {
+    const row = descriptionRowFromWorksheetRow(rawRow);
+    if (!row.itemCode) continue;
+
+    const key = normalizeDescriptionLookupKey(row.itemCode);
+    if (rowsByItemCode.has(key)) {
+      duplicateItemCodes.add(key);
+      continue;
+    }
+    rowsByItemCode.set(key, row);
+  }
+
+  return { rowsByItemCode, duplicateItemCodes };
+}
+
+function unzipWorkbookFiles(buffer: Buffer) {
+  const files = new Map<string, string>();
+  const directoryOffset = endOfCentralDirectoryOffset(buffer);
+  let offset = directoryOffset;
+
+  while (buffer.readUInt32LE(offset) === 0x02014b50) {
+    const compressionMethod = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+    const fileName = normalizeZipPath(
+      buffer
+        .subarray(offset + 46, offset + 46 + fileNameLength)
+        .toString("utf8"),
+    );
+    const content = readZipEntry(
+      buffer,
+      localHeaderOffset,
+      compressionMethod,
+      compressedSize,
+      uncompressedSize,
+    );
+    files.set(fileName, content.toString("utf8"));
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return files;
+}
+
+function endOfCentralDirectoryOffset(buffer: Buffer) {
+  for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50)
+      return buffer.readUInt32LE(offset + 16);
+  }
+
+  throw new Error("Description workbook is not a valid .xlsx file.");
+}
+
+function readZipEntry(
+  buffer: Buffer,
+  localHeaderOffset: number,
+  compressionMethod: number,
+  compressedSize: number,
+  uncompressedSize: number,
+) {
+  if (buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50)
+    throw new Error("Description workbook has an invalid ZIP entry.");
+
+  const fileNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+  const extraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+  const dataOffset = localHeaderOffset + 30 + fileNameLength + extraLength;
+  const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize);
+
+  if (compressionMethod === 0) return compressed;
+  if (compressionMethod === 8) {
+    const inflated = zlib.inflateRawSync(compressed);
+    if (inflated.length !== uncompressedSize) return inflated;
+    return inflated;
+  }
+
+  throw new Error("Description workbook uses an unsupported ZIP compression.");
+}
+
+function firstWorksheetPath(files: Map<string, string>) {
+  const workbookXml = files.get("xl/workbook.xml");
+  const workbookRelsXml = files.get("xl/_rels/workbook.xml.rels");
+  if (!workbookXml || !workbookRelsXml)
+    throw new Error("Description workbook is missing workbook metadata.");
+
+  const firstSheet = workbookXml.match(/<sheet\b[^>]*r:id="([^"]+)"/);
+  if (!firstSheet) throw new Error("Description workbook has no sheets.");
+
+  const relationship = new RegExp(
+    `<Relationship\\b[^>]*Id="${escapeRegExp(firstSheet[1])}"[^>]*Target="([^"]+)"`,
+  ).exec(workbookRelsXml);
+  if (!relationship)
+    throw new Error("Description workbook is missing worksheet metadata.");
+
+  return normalizeZipPath(
+    relationship[1].startsWith("/")
+      ? relationship[1].slice(1)
+      : `xl/${relationship[1]}`,
+  );
+}
+
+function normalizeZipPath(value: string) {
+  return value.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function parseSharedStrings(xml: string | undefined) {
+  if (!xml) return [];
+  return Array.from(xml.matchAll(/<si\b[\s\S]*?<\/si>/g)).map((match) =>
+    Array.from(match[0].matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g))
+      .map((textMatch) => decodeXml(textMatch[1]))
+      .join(""),
+  );
+}
+
+function worksheetRows(
+  sheetXml: string,
+  sharedStrings: string[],
+): Record<string, string>[] {
+  const rawRows = Array.from(sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g))
+    .map((rowMatch) =>
+      Array.from(rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)).map(
+        (cellMatch) => ({
+          column: cellColumn(cellMatch[1]),
+          value: cellValue(cellMatch[1], cellMatch[2], sharedStrings),
+        }),
+      ),
+    )
+    .filter((row) => row.length > 0);
+  const headerRow = rawRows[0] ?? [];
+  const headers = new Map(
+    headerRow.map((cell) => [cell.column, cell.value.trim()]),
+  );
+
+  return rawRows.slice(1).map((row) => {
+    const record: Record<string, string> = {};
+    for (const cell of row) {
+      const header = headers.get(cell.column);
+      if (header) record[header] = cell.value;
+    }
+    return record;
+  });
+}
+
+function cellColumn(attributes: string) {
+  const ref = attributes.match(/\br="([A-Z]+)\d+"/);
+  return ref?.[1] ?? "";
+}
+
+function cellValue(
+  attributes: string,
+  cellXml: string,
+  sharedStrings: string[],
+) {
+  const type = attributes.match(/\bt="([^"]+)"/)?.[1];
+  if (type === "inlineStr") {
+    return Array.from(cellXml.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g))
+      .map((match) => decodeXml(match[1]))
+      .join("");
+  }
+
+  const value = cellXml.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? "";
+  if (type === "s") return sharedStrings[Number(value)] ?? "";
+  return decodeXml(value);
+}
+
+function descriptionRowFromWorksheetRow(
+  row: Record<string, unknown>,
+): ProductMigrationDescriptionRow {
+  return {
+    itemCode: worksheetString(row, "Item Code"),
+    size: nullableWorksheetString(row, "SIZE"),
+    category: nullableWorksheetString(row, "Category"),
+    description: nullableWorksheetString(row, "Description"),
+    finish: nullableWorksheetString(row, "Finish"),
+    application: nullableWorksheetString(row, "Application"),
+    suitableFor: nullableWorksheetString(row, "Suitable For"),
+    surface: nullableWorksheetString(row, "Surface"),
+    disclaimer: nullableWorksheetString(row, "Disclaimer"),
+  };
+}
+
+function worksheetString(row: Record<string, unknown>, header: string) {
+  const value = row[header];
+  return value === null || value === undefined ? "" : String(value).trim();
+}
+
+function nullableWorksheetString(row: Record<string, unknown>, header: string) {
+  const value = worksheetString(row, header);
+  return value.length ? value : null;
+}
+
+function descriptionRowForCandidate(
+  baseSku: string,
+  products: MigrationSourceProduct[],
+  catalog: ProductMigrationDescriptionCatalog,
+) {
+  const lookupKeys = new Set<string>([normalizeDescriptionLookupKey(baseSku)]);
+
+  for (const product of products) {
+    lookupKeys.add(normalizeDescriptionLookupKey(product.identity.baseSku));
+    lookupKeys.add(normalizeDescriptionLookupKey(product.identity.sku));
+    lookupKeys.add(normalizeDescriptionLookupKey(product.variant.sku ?? ""));
+    lookupKeys.add(normalizeDescriptionLookupKey(product.title));
+    lookupKeys.add(normalizeDescriptionLookupKey(product.handle));
+  }
+
+  for (const key of lookupKeys) {
+    if (!key) continue;
+    const row = catalog.rowsByItemCode.get(key);
+    if (!row) continue;
+
+    const warnings = catalog.duplicateItemCodes.has(key)
+      ? ["duplicate_item_code"]
+      : [];
+    return { row, warnings };
+  }
+
+  return null;
+}
+
+function normalizeDescriptionLookupKey(value: string) {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/^(LUZ|VIS|MIN)[\s\-_]+/i, "")
+    .replace(/\s+/g, " ");
+}
+
+function descriptionHtmlFromDescriptionRow(row: ProductMigrationDescriptionRow) {
+  const description = cleanLabeledValue(row.description, "Description");
+  return description ? `<p>${escapeHtml(description)}</p>` : "";
+}
+
+function metafieldsFromDescriptionRow(
+  baseSku: string,
+  row: ProductMigrationDescriptionRow,
+): ProductMigrationMetafields {
+  const productDescription = plainTextFromHtml(
+    descriptionHtmlFromDescriptionRow(row),
+  );
+  const descriptionText = [
+    row.description,
+    row.finish,
+    row.application,
+    row.suitableFor,
+    row.surface,
+    row.category,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ");
+
+  return {
+    itemCode: row.itemCode || baseSku,
+    tileSize: extractTileSize([row.size ?? ""], descriptionText),
+    surfaceFinish: extractSurfaceFinishes(
+      [row.surface ?? "", row.finish ?? ""],
+      descriptionText,
+    ),
+    materialType: extractMaterialTypes(descriptionText),
+    printTechnology: extractPrintTechnologies(descriptionText),
+    colorTone: extractColorTones(descriptionText),
+    waterAbsorption: extractWaterAbsorption(descriptionText),
+    thicknessMm: extractThicknessMm(descriptionText),
+    rectified: /\brectified\b/i.test(descriptionText),
+    trafficRating: extractTrafficRatings(descriptionText),
+    applicationArea: extractApplicationAreas(
+      [row.application, row.description].filter(Boolean).join("; "),
+    ),
+    suitableFor: extractSuitableForValues(row.suitableFor ?? ""),
+    regionAvailability: regionalPrefixes.map(
+      (prefix) => regionAvailabilityByPrefix[prefix],
+    ),
+    disclaimer: cleanLabeledValue(row.disclaimer, "Disclaimer"),
+  };
+}
+
+function cleanLabeledValue(value: string | null, label: string) {
+  if (!value) return null;
+  return value
+    .replace(new RegExp(`^\\s*${escapeRegExp(label)}\\s*:\\s*`, "i"), "")
+    .trim();
+}
+
+function categoryValue(value: string | null | undefined) {
+  return cleanLabeledValue(value ?? null, "Category");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 async function migrateProductCandidate(
   candidate: ProductMigrationCandidate,
   locationsByName: Map<string, { id: string; name: string }>,
+  publicationIds: string[],
 ): Promise<ProductMigrationRunResult> {
   const inventorySet = candidate.regionalProducts.map((product) => ({
     locationName: product.locationName,
@@ -697,6 +1085,7 @@ async function migrateProductCandidate(
       locationsByName,
     );
     await setUnifiedInventoryQuantities(created.id, inventoryItemId, candidate);
+    await publishUnifiedProduct(created.id, publicationIds);
 
     const verified = await verifyMigratedProduct(
       created.id,
@@ -919,18 +1308,36 @@ function candidateFromSourceProducts(
   baseSku: string,
   products: MigrationSourceProduct[],
   existingUnifiedProductId: string | null,
+  descriptionCatalog: ProductMigrationDescriptionCatalog | null,
 ): ProductMigrationCandidate {
   const canonicalProduct = products[0];
-  const descriptionHtml = canonicalProduct.descriptionHtml ?? "";
+  const catalogMatch = descriptionCatalog
+    ? descriptionRowForCandidate(baseSku, products, descriptionCatalog)
+    : null;
+  const descriptionRow = catalogMatch?.row ?? null;
+  const descriptionHtml = descriptionRow
+    ? descriptionHtmlFromDescriptionRow(descriptionRow)
+    : (canonicalProduct.descriptionHtml ?? "");
   const tags = canonicalProduct.tags ?? [];
-  const productType = canonicalProduct.productType ?? "";
+  const productType =
+    categoryValue(descriptionRow?.category) ??
+    canonicalProduct.productType ??
+    "";
   const price = canonicalProduct.variant.price;
-  const metafields = extractMigrationMetafields(baseSku, descriptionHtml, tags);
+  const metafields = descriptionRow
+    ? metafieldsFromDescriptionRow(baseSku, descriptionRow)
+    : extractMigrationMetafields(baseSku, descriptionHtml, tags);
   const missingFields = missingMetafieldNames(metafields);
   const manualReviewFields = collectManualReviewFields(
     products,
     missingFields,
     existingUnifiedProductId,
+  );
+  const descriptionDataWarnings = catalogMatch?.warnings ?? [];
+  if (descriptionCatalog && !descriptionRow)
+    manualReviewFields.push("description_data_missing");
+  manualReviewFields.push(
+    ...descriptionDataWarnings.map((warning) => `description_data_${warning}`),
   );
 
   return {
@@ -946,8 +1353,23 @@ function candidateFromSourceProducts(
     ),
     metafields,
     missingFields,
-    manualReviewFields,
+    manualReviewFields: Array.from(new Set(manualReviewFields)),
     existingUnifiedProductId,
+    descriptionDataStatus: !descriptionCatalog
+      ? "not_provided"
+      : descriptionRow
+        ? descriptionDataWarnings.length
+          ? "warning"
+          : "matched"
+        : "missing",
+    descriptionDataWarnings,
+    descriptionDataSource: descriptionRow
+      ? {
+          itemCode: descriptionRow.itemCode,
+          size: descriptionRow.size,
+          category: descriptionRow.category,
+        }
+      : null,
   };
 }
 
@@ -1037,15 +1459,22 @@ function normalizeTagSet(tags: string[]) {
 function missingMetafieldNames(metafields: ProductMigrationMetafields) {
   const missing: string[] = [];
   if (!metafields.tileSize) missing.push(METAFIELD_KEYS.tileSize);
-  if (!metafields.surfaceFinish) missing.push(METAFIELD_KEYS.surfaceFinish);
-  if (!metafields.materialType) missing.push(METAFIELD_KEYS.materialType);
-  if (!metafields.printTechnology) missing.push(METAFIELD_KEYS.printTechnology);
+  if (metafields.surfaceFinish.length === 0)
+    missing.push(METAFIELD_KEYS.surfaceFinish);
+  if (metafields.materialType.length === 0)
+    missing.push(METAFIELD_KEYS.materialType);
+  if (metafields.printTechnology.length === 0)
+    missing.push(METAFIELD_KEYS.printTechnology);
+  if (metafields.colorTone.length === 0) missing.push(METAFIELD_KEYS.colorTone);
   if (!metafields.waterAbsorption) missing.push(METAFIELD_KEYS.waterAbsorption);
   if (metafields.thicknessMm === null) missing.push(METAFIELD_KEYS.thicknessMm);
-  if (!metafields.trafficRating) missing.push(METAFIELD_KEYS.trafficRating);
-  if (!metafields.applicationArea) missing.push(METAFIELD_KEYS.applicationArea);
-  if (!metafields.productDescription)
-    missing.push(METAFIELD_KEYS.productDescription);
+  if (metafields.trafficRating.length === 0)
+    missing.push(METAFIELD_KEYS.trafficRating);
+  if (metafields.applicationArea.length === 0)
+    missing.push(METAFIELD_KEYS.applicationArea);
+  if (metafields.suitableFor.length === 0)
+    missing.push(METAFIELD_KEYS.suitableFor);
+  if (!metafields.disclaimer) missing.push(METAFIELD_KEYS.disclaimer);
   return missing;
 }
 
@@ -1059,25 +1488,32 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
           metafields.tileSize,
         )
       : null,
-    metafields.surfaceFinish
+    metafields.surfaceFinish.length
       ? metafieldInput(
           "surface_finish",
           "list.single_line_text_field",
-          listMetafieldValue([metafields.surfaceFinish]),
+          listMetafieldValue(metafields.surfaceFinish),
         )
       : null,
-    metafields.materialType
+    metafields.materialType.length
       ? metafieldInput(
           "material_type",
           "list.single_line_text_field",
-          listMetafieldValue([metafields.materialType]),
+          listMetafieldValue(metafields.materialType),
         )
       : null,
-    metafields.printTechnology
+    metafields.printTechnology.length
       ? metafieldInput(
           "print_technology",
           "list.single_line_text_field",
-          listMetafieldValue([metafields.printTechnology]),
+          listMetafieldValue(metafields.printTechnology),
+        )
+      : null,
+    metafields.colorTone.length
+      ? metafieldInput(
+          "color_tone",
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.colorTone),
         )
       : null,
     metafields.waterAbsorption
@@ -1095,23 +1531,25 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
         )
       : null,
     metafieldInput("rectified", "boolean", String(metafields.rectified)),
-    metafields.trafficRating
+    metafields.trafficRating.length
       ? metafieldInput(
           "traffic_rating",
           "list.single_line_text_field",
-          listMetafieldValue([metafields.trafficRating]),
+          listMetafieldValue(metafields.trafficRating),
         )
       : null,
-    metafields.applicationArea
+    metafields.applicationArea.length
       ? metafieldInput(
           "application_area",
           "list.single_line_text_field",
-          listMetafieldValue(
-            metafields.applicationArea
-              .split(";")
-              .map((area) => area.trim())
-              .filter(Boolean),
-          ),
+          listMetafieldValue(metafields.applicationArea),
+        )
+      : null,
+    metafields.suitableFor.length
+      ? metafieldInput(
+          "suitable_for",
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.suitableFor),
         )
       : null,
     metafieldInput(
@@ -1119,11 +1557,11 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
       "list.single_line_text_field",
       listMetafieldValue(metafields.regionAvailability),
     ),
-    metafields.productDescription
+    metafields.disclaimer
       ? metafieldInput(
-          "product_description",
-          "multi_line_text_field",
-          metafields.productDescription,
+          "disclaimer",
+          "single_line_text_field",
+          metafields.disclaimer,
         )
       : null,
   ];
@@ -1323,6 +1761,49 @@ export function buildUnifiedInventoryQuantities(
     );
 }
 
+export function buildPublicationInputs(publicationIds: string[]) {
+  return publicationIds.map((publicationId) => ({ publicationId }));
+}
+
+async function fetchPublicationIds() {
+  const publicationIds: string[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const data: PublicationsResponse = await shopifyGraphql<PublicationsResponse>(
+      PUBLICATIONS_QUERY,
+      {
+        cursor,
+      },
+    );
+    publicationIds.push(
+      ...data.publications.nodes.map((publication) => publication.id),
+    );
+    cursor = data.publications.pageInfo.hasNextPage
+      ? data.publications.pageInfo.endCursor
+      : null;
+  } while (cursor);
+
+  return publicationIds;
+}
+
+async function publishUnifiedProduct(
+  productId: string,
+  publicationIds: string[],
+) {
+  if (publicationIds.length === 0) return;
+
+  const data = await shopifyGraphql<PublishablePublishResponse>(
+    PUBLISHABLE_PUBLISH_MUTATION,
+    {
+      id: productId,
+      input: buildPublicationInputs(publicationIds),
+    },
+  );
+
+  throwIfUserErrors(data.publishablePublish.userErrors);
+}
+
 async function verifyMigratedProduct(
   productId: string,
   candidate: ProductMigrationCandidate,
@@ -1420,8 +1901,9 @@ function extractTileSize(tags: string[], text: string) {
   return `${match[1]}x${match[2]}${unit}`;
 }
 
-function extractSurfaceFinish(tags: string[], text: string) {
+function extractSurfaceFinishes(tags: string[], text: string) {
   const finishes = [
+    "Semi Polished",
     "Polished",
     "Matte",
     "Matt",
@@ -1436,13 +1918,64 @@ function extractSurfaceFinish(tags: string[], text: string) {
     "Lappato",
     "Honed",
   ];
-  return (
-    extractKnownValue(tags, finishes) ?? extractKnownValue([text], finishes)
+  return extractKnownValues([...tags, text], finishes).map((finish) =>
+    finish === "Matt" ? "Matte" : finish,
+  ).filter(
+    (finish, _index, allFinishes) =>
+      !allFinishes.some(
+        (other) => other !== finish && other.includes(finish),
+      ),
   );
 }
 
-function extractMaterialType(text: string) {
-  return extractKnownValue(
+function extractColorTones(text: string) {
+  const normalized = text.replace(/\bgrey\b/gi, "gray");
+  const colorWords = [
+    "White",
+    "Black",
+    "Gray",
+    "Beige",
+    "Brown",
+    "Blue",
+    "Green",
+    "Red",
+    "Pink",
+    "Yellow",
+    "Cream",
+    "Ivory",
+    "Gold",
+    "Silver",
+    "Charcoal",
+  ];
+  const modifiers = ["Dark", "Light", "Warm", "Cool", "Medium"];
+  const found: string[] = [];
+
+  for (const color of colorWords) {
+    for (const modifier of modifiers) {
+      if (
+        new RegExp(
+          `\\b${escapeRegExp(modifier)}\\s+${escapeRegExp(color)}\\b`,
+          "i",
+        ).test(normalized)
+      )
+        found.push(`${modifier} ${color}`);
+    }
+    if (new RegExp(`\\b${escapeRegExp(color)}\\b`, "i").test(normalized))
+      found.push(color);
+  }
+
+  return uniqueValues(
+    found.filter(
+      (value) =>
+        !found.some(
+          (other) => other !== value && other.endsWith(` ${value}`),
+        ),
+    ),
+  );
+}
+
+function extractMaterialTypes(text: string) {
+  return extractKnownValues(
     [text],
     [
       "Porcelain",
@@ -1457,9 +1990,11 @@ function extractMaterialType(text: string) {
   );
 }
 
-function extractPrintTechnology(text: string) {
-  const match = text.match(/\b(?:HD\s*)?(?:Inkjet|Digital)\s+Print(?:ing)?\b/i);
-  return match ? titleCase(match[0].replace(/\s+/g, " ")) : null;
+function extractPrintTechnologies(text: string) {
+  const matches = text.match(/\b(?:HD\s*)?(?:Inkjet|Digital)\s+Print(?:ing)?\b/gi);
+  return uniqueValues(
+    (matches ?? []).map((match) => titleCase(match.replace(/\s+/g, " "))),
+  );
 }
 
 function extractWaterAbsorption(text: string) {
@@ -1483,18 +2018,20 @@ function extractThicknessMm(text: string) {
   return value ? Number(value) : null;
 }
 
-function extractTrafficRating(text: string) {
+function extractTrafficRatings(text: string) {
   const explicit = text.match(
     /traffic\s*(?:rating|grade)?[^A-Za-z]*(light|moderate|medium|heavy|commercial|residential)/i,
   );
-  if (explicit) return titleCase(explicit[1]);
-  return extractKnownValue(
+  return uniqueValues([
+    ...(explicit ? [titleCase(explicit[1])] : []),
+    ...extractKnownValues(
     [text],
     ["Light", "Moderate", "Medium", "Heavy", "Commercial", "Residential"],
-  );
+    ),
+  ]);
 }
 
-function extractApplicationArea(tags: string[]) {
+function extractApplicationAreas(text: string) {
   const areas = [
     "Floor",
     "Wall",
@@ -1505,12 +2042,49 @@ function extractApplicationArea(tags: string[]) {
     "Commercial",
     "Residential",
   ];
-  const found = areas.filter((area) =>
-    tags.some((tag) =>
-      new RegExp(`\\b${escapeRegExp(area)}\\b`, "i").test(tag),
-    ),
+
+  const normalizedText = text
+    .replace(/\b(?:or|and)\b/gi, ";")
+    .replace(/[\/,|]+/g, ";");
+
+  return areas.filter((area) =>
+    new RegExp(`\\b${escapeRegExp(area)}\\b`, "i").test(normalizedText),
   );
-  return found.length ? found.join("; ") : null;
+}
+
+function extractSuitableForValues(text: string) {
+  const cleaned = cleanLabeledValue(text, "Suitable For") ?? "";
+  const normalized = cleaned
+    .replace(/\band\b/gi, ",")
+    .replace(/[;/|]+/g, ",")
+    .replace(/\s+/g, " ");
+  const aliases: [RegExp, string][] = [
+    [/\bliving\s*rooms?\b/i, "Living Room"],
+    [/\bbedrooms?\b/i, "Bedroom"],
+    [/\bbathrooms?\b/i, "Bathroom"],
+    [/\bkitchens?\b/i, "Kitchen"],
+    [/\bdining\s*rooms?\b/i, "Dining Room"],
+    [/\bhallways?\b/i, "Hallway"],
+    [/\bchurches?\b/i, "Church"],
+    [/\bhospitals?\b/i, "Hospital"],
+    [/\boffices?\b/i, "Office"],
+    [/\bshopping\s*malls?\b/i, "Shopping Mall"],
+    [/\bhotels?\b/i, "Hotel"],
+    [/\bcondominiums?\b/i, "Condominium"],
+    [/\brestaurants?\b/i, "Restaurant"],
+    [/\bairports?\b/i, "Airport"],
+    [/\bcafeterias?\b/i, "Cafeteria"],
+    [/\bpatios?\b/i, "Patio"],
+    [/\bbalconies?\b/i, "Balcony"],
+    [/\bterraces?\b/i, "Terrace"],
+    [/\bporches?\b/i, "Porch"],
+  ];
+
+  return uniqueValues(
+    aliases
+      .filter(([pattern]) => pattern.test(normalized))
+      .map(([, value]) => value),
+  );
 }
 
 function extractKnownValue(sources: string[], values: string[]) {
@@ -1522,6 +2096,24 @@ function extractKnownValue(sources: string[], values: string[]) {
   }
 
   return null;
+}
+
+function extractKnownValues(sources: string[], values: string[]) {
+  const found: string[] = [];
+  for (const source of sources) {
+    for (const value of values) {
+      if (new RegExp(`\\b${escapeRegExp(value)}\\b`, "i").test(source))
+        found.push(value === "Matt" ? "Matte" : value);
+    }
+  }
+
+  return uniqueValues(found);
+}
+
+function uniqueValues(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => value.trim()).filter(Boolean)),
+  );
 }
 
 function titleCase(value: string) {
