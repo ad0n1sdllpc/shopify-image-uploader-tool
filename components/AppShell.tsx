@@ -102,6 +102,12 @@ type Store = {
   lastJob: UploadJob | null;
 };
 
+type MigrationProgress = {
+  startedAt: number;
+  total: number;
+  now: number;
+};
+
 type PersistedStore = {
   scan: ScanResult | null;
   products: ShopifyProduct[];
@@ -412,9 +418,12 @@ export default function AppShell({ page }: { page: PageKey }) {
   const [migrationResults, setMigrationResults] = useState<
     ProductMigrationRunResult[]
   >([]);
+  const [migrationProgress, setMigrationProgress] =
+    useState<MigrationProgress | null>(null);
   const [migrationDescriptionWorkbook, setMigrationDescriptionWorkbook] =
     useState<File | null>(null);
   const checkpointInputRef = useRef<HTMLInputElement>(null);
+  const migrationProgressActive = Boolean(migrationProgress);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("image-uploader-state");
@@ -443,6 +452,16 @@ export default function AppShell({ page }: { page: PageKey }) {
       );
     }
   }, [hydrated, store]);
+
+  useEffect(() => {
+    if (!migrationProgressActive) return;
+    const timer = window.setInterval(() => {
+      setMigrationProgress((current) =>
+        current ? { ...current, now: Date.now() } : current,
+      );
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [migrationProgressActive]);
 
   const matchedSelections = useMemo(
     () =>
@@ -700,7 +719,7 @@ export default function AppShell({ page }: { page: PageKey }) {
       setMigrationSelectedSkus([]);
       setMigrationResults([]);
       setNotice(
-        `${response.scan.candidates.length} complete regional set(s) found. ${selectableSkus.length} can be selected for migration. ${response.scan.issues.length} set(s) need manual review.`,
+        `${response.scan.candidates.length} eligible regional group(s) found. ${selectableSkus.length} can be selected for migration. ${response.scan.issues.length} duplicate group(s) need manual review.`,
       );
     } catch (nextError) {
       setError(
@@ -735,6 +754,11 @@ export default function AppShell({ page }: { page: PageKey }) {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setMigrationProgress({
+      startedAt: Date.now(),
+      total: migrationSelectedSkus.length,
+      now: Date.now(),
+    });
     try {
       const response = await request<{ results: ProductMigrationRunResult[] }>(
         "/api/migrations/products",
@@ -770,6 +794,7 @@ export default function AppShell({ page }: { page: PageKey }) {
         nextError instanceof Error ? nextError.message : String(nextError),
       );
     } finally {
+      setMigrationProgress(null);
       setBusy(false);
     }
   }
@@ -1208,6 +1233,7 @@ export default function AppShell({ page }: { page: PageKey }) {
               scan={migrationScan}
               selectedSkus={migrationSelectedSkus}
               results={migrationResults}
+              progress={migrationProgress}
               descriptionWorkbook={migrationDescriptionWorkbook}
               onDescriptionWorkbookChange={setMigrationDescriptionWorkbook}
               onScan={scanProductMigrationCandidates}
@@ -1897,6 +1923,7 @@ function MigrationPage({
   scan,
   selectedSkus,
   results,
+  progress,
   descriptionWorkbook,
   onDescriptionWorkbookChange,
   onScan,
@@ -1908,6 +1935,7 @@ function MigrationPage({
   scan: ProductMigrationScanResult | null;
   selectedSkus: string[];
   results: ProductMigrationRunResult[];
+  progress: MigrationProgress | null;
   descriptionWorkbook: File | null;
   onDescriptionWorkbookChange: (file: File | null) => void;
   onScan: () => void;
@@ -1926,6 +1954,23 @@ function MigrationPage({
   const allSelected =
     selectableCandidates.length > 0 &&
     selectedCount === selectableCandidates.length;
+  const progressElapsedSeconds = progress
+    ? Math.max(0, Math.floor((progress.now - progress.startedAt) / 1000))
+    : 0;
+  const progressEstimatedSeconds = progress
+    ? Math.max(30, progress.total * FALLBACK_SECONDS_PER_PRODUCT)
+    : 0;
+  const progressPercent = progress
+    ? Math.min(
+        95,
+        Math.max(
+          5,
+          Math.round(
+            (progressElapsedSeconds / progressEstimatedSeconds) * 100,
+          ),
+        ),
+      )
+    : 0;
 
   return (
     <div className="space-y-4">
@@ -1937,7 +1982,7 @@ function MigrationPage({
             </h2>
             <p className="text-sm admin-muted">
               {scan
-                ? `${scan.candidates.length} complete set(s), ${scan.issues.length} issue(s), scanned ${new Date(scan.scannedAt).toLocaleString()}`
+                ? `${scan.candidates.length} eligible group(s), ${scan.issues.length} duplicate issue(s), scanned ${new Date(scan.scannedAt).toLocaleString()}`
                 : "No migration scan loaded."}
             </p>
           </div>
@@ -1987,7 +2032,10 @@ function MigrationPage({
         )}
         {scan ? (
           <div className="mt-3 grid gap-2 md:grid-cols-4">
-            <MetricPanel label="Complete sets" value={scan.candidates.length} />
+            <MetricPanel
+              label="Eligible groups"
+              value={scan.candidates.length}
+            />
             <MetricPanel
               label="Selectable"
               value={selectableCandidates.length}
@@ -2005,6 +2053,32 @@ function MigrationPage({
           </div>
         ) : null}
       </section>
+
+      {progress ? (
+        <section className="admin-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">
+                Migration in progress
+              </h2>
+              <p className="text-sm admin-muted">
+                Processing {progress.total} selected SKU(s). Shopify returns
+                exact per-product results when the batch finishes.
+              </p>
+            </div>
+            <div className="text-right text-xs admin-muted">
+              <p>Elapsed {formatClockDuration(progressElapsedSeconds)}</p>
+              <p>Estimate {formatDuration(progressEstimatedSeconds)}</p>
+            </div>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-mist dark:bg-white/10">
+            <div
+              className="h-full rounded-full bg-ink transition-all duration-500 dark:bg-white"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </section>
+      ) : null}
 
       {scan ? (
         <section className="admin-card overflow-hidden">
@@ -2067,7 +2141,7 @@ function MigrationPage({
             </div>
           ) : (
             <p className="p-5 text-sm admin-muted">
-              No complete LUZ/VIS/MIN sets were found.
+              No eligible regional products were found.
             </p>
           )}
         </section>
@@ -2077,7 +2151,7 @@ function MigrationPage({
         <section className="admin-card overflow-hidden">
           <div className="border-b border-line p-4 dark:border-white/10">
             <h2 className="text-base font-semibold">
-              Incomplete or duplicate sets
+              Duplicate sets
             </h2>
             <p className="text-sm admin-muted">
               {scan.issues.length} SKU group(s)
@@ -2387,6 +2461,12 @@ function formatDuration(totalSeconds: number) {
   if (hours === 0) return `~${remainingMinutes}m`;
   if (remainingMinutes === 0) return `~${hours}h`;
   return `~${hours}h ${remainingMinutes}m`;
+}
+
+function formatClockDuration(totalSeconds: number) {
+  const minutes = Math.floor(Math.max(0, totalSeconds) / 60);
+  const seconds = Math.max(0, totalSeconds) % 60;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 }
 
 function batchStatusLabel(status: "uploaded" | "current" | "waiting") {

@@ -553,7 +553,7 @@ export async function migrateRegionalProducts(
         imagesAttached: 0,
         metafieldsPopulated: 0,
         originalProductGids: [],
-        error: "No complete LUZ/VIS/MIN product set was found for this SKU.",
+        error: "No regional migration product was found for this SKU.",
       });
       continue;
     }
@@ -614,19 +614,10 @@ export function buildProductMigrationScan(
       (group[prefix] ?? []).map((product) => regionalProductSummary(product)),
     );
 
-    if (missingPrefixes.length || duplicatePrefixes.length) {
+    if (duplicatePrefixes.length) {
       issues.push({
         baseSku,
-        reason: [
-          missingPrefixes.length
-            ? `Missing ${missingPrefixes.join(", ")} product(s)`
-            : "",
-          duplicatePrefixes.length
-            ? `Duplicate ${duplicatePrefixes.join(", ")} product(s)`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("; "),
+        reason: `Duplicate ${duplicatePrefixes.join(", ")} product(s)`,
         products: regionalProducts,
       });
       continue;
@@ -641,7 +632,15 @@ export function buildProductMigrationScan(
       existingUnifiedProductsBySku.get(baseSku) ?? null,
       options.descriptionCatalog ?? null,
     );
-    candidates.push(candidate);
+    const missingRegionFields = missingPrefixes.map(
+      (prefix) => `missing_${prefix}`,
+    );
+    candidates.push({
+      ...candidate,
+      manualReviewFields: Array.from(
+        new Set([...candidate.manualReviewFields, ...missingRegionFields]),
+      ),
+    });
   }
 
   return {
@@ -1203,14 +1202,15 @@ function detailProductIdsForMigration(
 
   const ids = new Set<string>();
   for (const group of groups.values()) {
-    const complete = regionalPrefixes.every(
-      (prefix) => (group[prefix]?.length ?? 0) === 1,
+    const hasDuplicatePrefix = regionalPrefixes.some(
+      (prefix) => (group[prefix]?.length ?? 0) > 1,
     );
-    if (!complete) continue;
+    if (hasDuplicatePrefix) continue;
 
     for (const prefix of regionalPrefixes) {
-      const product = group[prefix]?.[0];
-      if (product) ids.add(product.id);
+      for (const product of group[prefix] ?? []) {
+        ids.add(product.id);
+      }
     }
   }
 
@@ -1511,8 +1511,8 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
     metafields.features.length
       ? metafieldInput(
           "features",
-          "list.single_line_text_field",
-          listMetafieldValue(metafields.features),
+          "single_line_text_field",
+          metafields.features.join("; "),
         )
       : null,
     metafields.materialType.length

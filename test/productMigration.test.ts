@@ -214,12 +214,28 @@ describe("product migration grouping", () => {
     ]);
   });
 
-  it("flags incomplete regional groups for manual review", () => {
+  it("keeps incomplete regional groups selectable with missing-region review fields", () => {
     const scan = buildProductMigrationScan([product("LUZ"), product("VIS")]);
 
-    expect(scan.candidates).toEqual([]);
-    expect(scan.issues).toHaveLength(1);
-    expect(scan.issues[0].reason).toBe("Missing MIN product(s)");
+    expect(scan.candidates).toHaveLength(1);
+    expect(scan.issues).toEqual([]);
+    expect(
+      scan.candidates[0].regionalProducts.map((item) => item.prefix),
+    ).toEqual(["LUZ", "VIS"]);
+    expect(scan.candidates[0].manualReviewFields).toContain("missing_MIN");
+  });
+
+  it("keeps one-location regional groups selectable", () => {
+    const scan = buildProductMigrationScan([product("LUZ")]);
+
+    expect(scan.candidates).toHaveLength(1);
+    expect(scan.issues).toEqual([]);
+    expect(
+      scan.candidates[0].regionalProducts.map((item) => item.prefix),
+    ).toEqual(["LUZ"]);
+    expect(scan.candidates[0].manualReviewFields).toEqual(
+      expect.arrayContaining(["missing_VIS", "missing_MIN"]),
+    );
   });
 
   it("marks candidates when a unified product already exists", () => {
@@ -479,14 +495,9 @@ describe("product migration Excel description enrichment", () => {
         (input) => input.key === "features",
       ),
     ).toMatchObject({
-      type: "list.single_line_text_field",
-      value: JSON.stringify([
-        "Stain Resistant",
-        "Non Water Appearance",
-        "Glazed",
-        "Rectified",
-        "Inkjet Print Technology",
-      ]),
+      type: "single_line_text_field",
+      value:
+        "Stain Resistant; Non Water Appearance; Glazed; Rectified; Inkjet Print Technology",
     });
     expect(
       metafieldInputs(candidate.metafields).find(
