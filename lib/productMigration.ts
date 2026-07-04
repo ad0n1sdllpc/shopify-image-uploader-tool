@@ -1524,8 +1524,8 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
     metafields.features.length
       ? metafieldInput(
           "features",
-          "single_line_text_field",
-          metafields.features.join("; "),
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.features),
         )
       : null,
     metafields.materialType.length

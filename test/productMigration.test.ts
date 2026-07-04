@@ -525,9 +525,14 @@ describe("product migration Excel description enrichment", () => {
         (input) => input.key === "features",
       ),
     ).toMatchObject({
-      type: "single_line_text_field",
-      value:
-        "Stain Resistant; Non Water Appearance; Glazed; Rectified; Inkjet Print Technology",
+      type: "list.single_line_text_field",
+      value: JSON.stringify([
+        "Stain Resistant",
+        "Non Water Appearance",
+        "Glazed",
+        "Rectified",
+        "Inkjet Print Technology",
+      ]),
     });
     expect(
       metafieldInputs(candidate.metafields).find(
