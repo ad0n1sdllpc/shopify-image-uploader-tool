@@ -222,6 +222,10 @@ describe("product migration grouping", () => {
     expect(
       scan.candidates[0].regionalProducts.map((item) => item.prefix),
     ).toEqual(["LUZ", "VIS"]);
+    expect(scan.candidates[0].metafields.regionAvailability).toEqual([
+      "Luzon",
+      "Visayas",
+    ]);
     expect(scan.candidates[0].manualReviewFields).toContain("missing_MIN");
   });
 
@@ -233,9 +237,35 @@ describe("product migration grouping", () => {
     expect(
       scan.candidates[0].regionalProducts.map((item) => item.prefix),
     ).toEqual(["LUZ"]);
+    expect(scan.candidates[0].metafields.regionAvailability).toEqual([
+      "Luzon",
+    ]);
     expect(scan.candidates[0].manualReviewFields).toEqual(
       expect.arrayContaining(["missing_VIS", "missing_MIN"]),
     );
+  });
+
+  it("uses only present regional products for Excel-enriched region availability", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "YM6623",
+          Description: "Description: Dark Gray Semi Polished Tile",
+          Application: "Application: Floor / Indoor",
+          Surface: "Surface: Semi Polished",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan([product("LUZ"), product("MIN")], {
+      descriptionCatalog: catalog,
+    });
+
+    expect(scan.candidates).toHaveLength(1);
+    expect(scan.candidates[0].metafields.regionAvailability).toEqual([
+      "Luzon",
+      "Mindanao",
+    ]);
+    expect(scan.candidates[0].manualReviewFields).toContain("missing_VIS");
   });
 
   it("marks candidates when a unified product already exists", () => {

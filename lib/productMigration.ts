@@ -657,6 +657,7 @@ export function extractMigrationMetafields(
   baseSku: string,
   descriptionHtml: string,
   tags: string[],
+  availablePrefixes: RegionalPrefix[] = [...regionalPrefixes],
 ): ProductMigrationMetafields {
   const productDescription = plainTextFromHtml(descriptionHtml);
   const searchableText = [productDescription, tags.join(" ")].join(" ");
@@ -675,9 +676,7 @@ export function extractMigrationMetafields(
     trafficRating: extractTrafficRatings(productDescription),
     applicationArea: extractApplicationAreas(tags.join("; ")),
     suitableFor: [],
-    regionAvailability: regionalPrefixes.map(
-      (prefix) => regionAvailabilityByPrefix[prefix],
-    ),
+    regionAvailability: regionAvailabilityFromPrefixes(availablePrefixes),
     disclaimer: null,
   };
 }
@@ -956,6 +955,7 @@ function descriptionHtmlFromDescriptionRow(row: ProductMigrationDescriptionRow) 
 function metafieldsFromDescriptionRow(
   baseSku: string,
   row: ProductMigrationDescriptionRow,
+  availablePrefixes: RegionalPrefix[],
 ): ProductMigrationMetafields {
   const productDescription = plainTextFromHtml(
     descriptionHtmlFromDescriptionRow(row),
@@ -991,11 +991,15 @@ function metafieldsFromDescriptionRow(
       [row.application, row.description].filter(Boolean).join("; "),
     ),
     suitableFor: extractSuitableForValues(row.suitableFor ?? ""),
-    regionAvailability: regionalPrefixes.map(
-      (prefix) => regionAvailabilityByPrefix[prefix],
-    ),
+    regionAvailability: regionAvailabilityFromPrefixes(availablePrefixes),
     disclaimer: cleanLabeledValue(row.disclaimer, "Disclaimer"),
   };
+}
+
+function regionAvailabilityFromPrefixes(prefixes: RegionalPrefix[]) {
+  return Array.from(
+    new Set(prefixes.map((prefix) => regionAvailabilityByPrefix[prefix])),
+  );
 }
 
 function cleanLabeledValue(value: string | null, label: string) {
@@ -1336,9 +1340,15 @@ function candidateFromSourceProducts(
     canonicalProduct.productType ??
     "";
   const price = canonicalProduct.variant.price;
+  const availablePrefixes = products.map((product) => product.identity.prefix);
   const metafields = descriptionRow
-    ? metafieldsFromDescriptionRow(baseSku, descriptionRow)
-    : extractMigrationMetafields(baseSku, descriptionHtml, tags);
+    ? metafieldsFromDescriptionRow(baseSku, descriptionRow, availablePrefixes)
+    : extractMigrationMetafields(
+        baseSku,
+        descriptionHtml,
+        tags,
+        availablePrefixes,
+      );
   const missingFields = missingMetafieldNames(metafields);
   const manualReviewFields = collectManualReviewFields(
     products,
