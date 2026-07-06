@@ -1,7 +1,7 @@
 import type { UploadJob, UploadSelection } from "@/types";
 
 export const DEFAULT_REVIEW_BATCH_GROUP_SIZE = 100;
-export const DEFAULT_MIGRATION_BATCH_SIZE = 30;
+export const DEFAULT_MIGRATION_BATCH_SIZE = 100;
 export const FALLBACK_SECONDS_PER_PRODUCT = 30;
 
 export type ReviewBatchStatus = "uploaded" | "current" | "waiting";

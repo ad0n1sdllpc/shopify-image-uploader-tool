@@ -118,16 +118,16 @@ describe("review upload batches", () => {
 });
 
 describe("product migration batches", () => {
-  it("splits selected migration SKUs into batches of 30", () => {
-    const skus = Array.from({ length: 65 }, (_, index) => `SKU-${index + 1}`);
+  it("splits selected migration SKUs into batches of 100", () => {
+    const skus = Array.from({ length: 165 }, (_, index) => `SKU-${index + 1}`);
     const plan = createMigrationBatchPlan(skus, []);
 
-    expect(plan.batchSize).toBe(30);
+    expect(plan.batchSize).toBe(100);
     expect(plan.currentBatchNumber).toBe(1);
-    expect(plan.totalBatchCount).toBe(3);
-    expect(plan.currentBatchSkus).toEqual(skus.slice(0, 30));
-    expect(plan.waitingSkus).toEqual(skus.slice(30));
-    expect(plan.remainingSkuCount).toBe(65);
+    expect(plan.totalBatchCount).toBe(2);
+    expect(plan.currentBatchSkus).toEqual(skus.slice(0, 100));
+    expect(plan.waitingSkus).toEqual(skus.slice(100));
+    expect(plan.remainingSkuCount).toBe(165);
   });
 
   it("excludes completed migration SKUs and keeps remaining SKUs retryable", () => {
