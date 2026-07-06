@@ -6,6 +6,7 @@ import {
   extractMigrationMetafields,
   isIgnorableInventoryActivationError,
   metafieldInputs,
+  parseMigrationDescriptionFile,
   parseMigrationDescriptionWorkbook,
 } from "@/lib/productMigration";
 
@@ -114,6 +115,13 @@ function workbookBuffer(rows: Record<string, string>[]) {
     "Material Type",
     "Print Technology",
   ];
+  return workbookBufferWithHeaders(headers, rows);
+}
+
+function workbookBufferWithHeaders(
+  headers: string[],
+  rows: Record<string, string>[],
+) {
   const sheetRows = [
     headers,
     ...rows.map((row) => headers.map((header) => row[header] ?? "")),
@@ -135,6 +143,34 @@ function workbookBuffer(rows: Record<string, string>[]) {
     "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
     "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
     "xl/worksheets/sheet1.xml": sheetXml,
+  });
+}
+
+function workbookBufferWithNamespacedXml(
+  headers: string[],
+  rows: Record<string, string>[],
+) {
+  const sheetRows = [
+    headers,
+    ...rows.map((row) => headers.map((header) => row[header] ?? "")),
+  ];
+  const sheetXml = `<?xml version="1.0" encoding="utf-8"?><x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData>${sheetRows
+    .map(
+      (row, rowIndex) =>
+        `<x:row r="${rowIndex + 1}">${row
+          .map(
+            (value, columnIndex) =>
+              `<x:c r="${columnName(columnIndex)}${rowIndex + 1}" t="str">${value ? `<x:v>${xmlEscape(value)}</x:v>` : ""}</x:c>`,
+          )
+          .join("")}</x:row>`,
+    )
+    .join("")}</x:sheetData></x:worksheet>`;
+
+  return zipBuffer({
+    "xl/workbook.xml": `<?xml version="1.0" encoding="utf-8"?><x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheets><x:sheet name="products_plain" sheetId="1" r:id="Rid1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" /></x:sheets></x:workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="utf-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="/xl/worksheets/sheet1.xml" Id="Rid1" /></Relationships>`,
+    "xl/worksheets/sheet1.xml": sheetXml,
+    "xl/sharedStrings.xml": `<?xml version="1.0" encoding="utf-8"?><x:sst xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" />`,
   });
 }
 
@@ -191,6 +227,19 @@ function zipBuffer(files: Record<string, string>) {
   return Buffer.concat([localFiles, centralDirectory, end]);
 }
 
+function csvBuffer(headers: string[], rows: Record<string, string>[]) {
+  const escapeCsv = (value: string) =>
+    /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+
+  const lines = [
+    headers.map(escapeCsv).join(","),
+    ...rows.map((row) =>
+      headers.map((header) => escapeCsv(row[header] ?? "")).join(","),
+    ),
+  ];
+  return Buffer.from(lines.join("\r\n"), "utf8");
+}
+
 describe("product migration grouping", () => {
   it("builds a complete regional candidate with mapped inventory and canonical images", () => {
     const scan = buildProductMigrationScan([
@@ -207,10 +256,11 @@ describe("product migration grouping", () => {
       price: "1299.00",
       productType: "Tile",
       missingFields: [
+        "custom.unit_type",
         "custom.pieces_per_box",
         "custom.color_tone",
+        "custom.slip_resistant",
         "custom.suitable_for",
-        "custom.disclaimer",
       ],
     });
     expect(scan.candidates[0].imageUrls).toEqual([
@@ -326,8 +376,8 @@ describe("product migration metafield extraction", () => {
     expect(metafields).toMatchObject({
       itemCode: "YM6623",
       tileSize: "60x60 cm",
+      unitType: null,
       piecesPerBox: null,
-      box: null,
       surfaceFinish: ["Polished"],
       features: ["Rectified"],
       materialType: ["Porcelain"],
@@ -335,6 +385,7 @@ describe("product migration metafield extraction", () => {
       colorTone: [],
       waterAbsorption: "E<0.5%",
       thicknessMm: "8.2",
+      slipResistant: null,
       rectified: true,
       trafficRating: ["Moderate"],
       applicationArea: ["Floor", "Indoor"],
@@ -348,8 +399,8 @@ describe("product migration metafield extraction", () => {
     const inputs = metafieldInputs({
       itemCode: "YM6623",
       tileSize: "60x60 cm",
+      unitType: null,
       piecesPerBox: null,
-      box: null,
       surfaceFinish: ["Polished"],
       features: [],
       materialType: ["Porcelain"],
@@ -357,6 +408,7 @@ describe("product migration metafield extraction", () => {
       colorTone: [],
       waterAbsorption: "E<0.5%",
       thicknessMm: "8.2",
+      slipResistant: null,
       rectified: true,
       trafficRating: ["Moderate"],
       applicationArea: ["Floor", "Indoor"],
@@ -384,11 +436,83 @@ describe("product migration metafield extraction", () => {
       value: JSON.stringify(["Luzon", "Visayas", "Mindanao"]),
     });
     expect(inputs.find((input) => input.key === "pieces_per_box")).toBeUndefined();
-    expect(inputs.find((input) => input.key === "box")).toBeUndefined();
+    expect(inputs.find((input) => input.key === "unit_type")).toBeUndefined();
     expect(inputs.find((input) => input.key === "disclaimer")).toBeUndefined();
     expect(inputs.some((input) => input.key === "product_description")).toBe(
       false,
     );
+  });
+
+  it("serializes pieces_per_box as a Shopify integer metafield", () => {
+    const inputs = metafieldInputs({
+      itemCode: "YM6623",
+      tileSize: "60x60 cm",
+      unitType: "Box",
+      piecesPerBox: "10",
+      surfaceFinish: [],
+      features: [],
+      materialType: [],
+      printTechnology: [],
+      colorTone: [],
+      waterAbsorption: null,
+      thicknessMm: null,
+      slipResistant: null,
+      rectified: null,
+      trafficRating: [],
+      applicationArea: [],
+      suitableFor: [],
+      regionAvailability: ["Luzon", "Visayas", "Mindanao"],
+      disclaimer: null,
+    });
+
+    expect(inputs.find((input) => input.key === "pieces_per_box")).toMatchObject({
+      type: "number_integer",
+      value: "10",
+    });
+  });
+
+  it("serializes metafields in the workbook column order", () => {
+    const inputs = metafieldInputs({
+      itemCode: "ORDER1",
+      tileSize: "30x90 cm",
+      surfaceFinish: ["Matte"],
+      colorTone: ["White"],
+      unitType: "box",
+      piecesPerBox: "6",
+      thicknessMm: "9",
+      waterAbsorption: "E<0.5%",
+      trafficRating: ["High"],
+      slipResistant: true,
+      rectified: true,
+      applicationArea: ["Wall", "Indoor"],
+      suitableFor: ["Bathroom"],
+      materialType: ["Porcelain"],
+      printTechnology: ["Inkjet Print"],
+      features: ["Stain Resistant"],
+      regionAvailability: ["Luzon"],
+      disclaimer: "Color may vary.",
+    });
+
+    expect(inputs.map((input) => input.key)).toEqual([
+      "item_code",
+      "tile_size",
+      "surface_finish",
+      "color_tone",
+      "unit_type",
+      "pieces_per_box",
+      "thickness_mm",
+      "water_absorption",
+      "traffic_rating",
+      "slip_resistant",
+      "rectified",
+      "application_area",
+      "suitable_for",
+      "material_type",
+      "print_technology",
+      "features",
+      "region_availability",
+      "disclaimer",
+    ]);
   });
 });
 
@@ -453,13 +577,13 @@ describe("product migration Excel description enrichment", () => {
       itemCode: "YM6623",
       tileSize: "60x60 cm",
       surfaceFinish: ["Matte", "Glossy"],
-      features: ["Rectified"],
-      materialType: ["Porcelain"],
-      printTechnology: ["Inkjet Print"],
+      features: [],
+      materialType: [],
+      printTechnology: [],
       colorTone: [],
-      waterAbsorption: "E<0.5%",
-      thicknessMm: "8.2",
-      rectified: true,
+      waterAbsorption: null,
+      thicknessMm: null,
+      rectified: null,
       applicationArea: [
         "Floor",
         "Wall",
@@ -529,32 +653,33 @@ describe("product migration Excel description enrichment", () => {
       tileSize: "30x60 cm",
       surfaceFinish: ["Polished"],
       piecesPerBox: "10",
-      box: "Box",
+      unitType: null,
       colorTone: ["Light Gray", "Gray"],
       waterAbsorption: "E<0.5%",
       thicknessMm: "7.1+/-2.0",
+      slipResistant: null,
       rectified: true,
       trafficRating: ["High"],
       applicationArea: ["Wall", "Indoor"],
       suitableFor: ["Living Room", "Swimming Pool"],
       materialType: ["Porcelain"],
       printTechnology: ["Inkjet Print"],
-      features: ["Stain Resistant"],
+      features: ["Stain-Resistant"],
     });
     expect(
       metafieldInputs(candidate.metafields).find(
-        (input) => input.key === "box",
+        (input) => input.key === "application_area",
       ),
     ).toMatchObject({
-      type: "single_line_text_field",
-      value: "Box",
+      type: "list.single_line_text_field",
+      value: JSON.stringify(["Wall", "Indoor"]),
     });
     expect(candidate.metafields.disclaimer).toBe(
       "Color of website images may vary slightly from actual products.",
     );
   });
 
-  it("adds the default disclaimer for Tiles when the workbook leaves it blank", () => {
+  it("adds the default disclaimer for vinyl when the workbook leaves it blank", () => {
     const catalog = parseMigrationDescriptionWorkbook(
       workbookBuffer([
         {
@@ -583,9 +708,416 @@ describe("product migration Excel description enrichment", () => {
     expect(scan.candidates[0].metafields.disclaimer).toBe(
       "Color of website images may vary slightly from actual products.",
     );
-    expect(scan.candidates[0].missingFields).not.toContain(
-      "custom.disclaimer",
+  });
+
+  it("splits workbook feature lists, keeps blank rectified false, and reads pieces per box header variants", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBufferWithHeaders(
+        [
+          "Item Code",
+          "Product Category",
+          "Description (clean)",
+          "No. of Pieces per Box",
+          "Features",
+          "Rectified",
+        ],
+        [
+          {
+            "Item Code": "LIST1",
+            "Product Category": "Tiles",
+            "Description (clean)": "Neutral tile",
+            "No. of Pieces per Box": "12",
+            Features: "Porcelain; Stain-resistant; Non-water appearance.",
+            Rectified: "",
+          },
+        ],
+      ),
     );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-LIST1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const metafields = scan.candidates[0].metafields;
+
+    expect(metafields.piecesPerBox).toBe("12");
+    expect(metafields.unitType).toBe(null);
+    expect(metafields.features).toEqual([
+      "Porcelain",
+      "Stain-Resistant",
+      "Non-Water Appearance",
+    ]);
+    expect(metafields.rectified).toBe(null);
+  });
+
+  it("reads alternate features headers and splits newline-separated feature cells", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBufferWithHeaders(
+        [
+          "Item Code",
+          "Product Category",
+          "Description (clean)",
+          "Product Features",
+        ],
+        [
+          {
+            "Item Code": "LIST2",
+            "Product Category": "Tiles",
+            "Description (clean)": "Neutral tile",
+            "Product Features":
+              "Porcelain\r\nStain-resistant\r\nNon-water appearance",
+          },
+        ],
+      ),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-LIST2",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+
+    expect(scan.candidates[0].metafields.features).toEqual([
+      "Porcelain",
+      "Stain-Resistant",
+      "Non-Water Appearance",
+    ]);
+  });
+
+  it("reads snake_case workbook headers used by the sample file", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBufferWithHeaders(
+        [
+          "item_code",
+          "tile_size",
+          "product_category",
+          "description_clean",
+          "features",
+        ],
+        [
+          {
+            item_code: "SAMPLE1",
+            tile_size: "20x30 CM",
+            product_category: "Tiles",
+            description_clean: "Dark white",
+            features: "Stain-resistant",
+          },
+        ],
+      ),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-SAMPLE1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+
+    expect(scan.candidates[0].descriptionDataStatus).toBe("matched");
+    expect(scan.candidates[0].metafields.tileSize).toBe("20x30 cm");
+    expect(scan.candidates[0].metafields.features).toEqual(["Stain-Resistant"]);
+  });
+
+  it("reads namespaced workbook XML used by external xlsx generators", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBufferWithNamespacedXml(
+        [
+          "item_code",
+          "tile_size",
+          "product_category",
+          "description_clean",
+          "features",
+        ],
+        [
+          {
+            item_code: "NS1",
+            tile_size: "20x30 CM",
+            product_category: "Tiles",
+            description_clean: "Dark white",
+            features: "Stain-resistant",
+          },
+        ],
+      ),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-NS1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+
+    expect(scan.candidates[0].descriptionDataStatus).toBe("matched");
+    expect(scan.candidates[0].metafields.features).toEqual(["Stain-Resistant"]);
+  });
+
+  it("reads CSV files with the custom metafield headers", () => {
+    const catalog = parseMigrationDescriptionFile(
+      csvBuffer(
+        [
+          "custom.item_code",
+          "custom.tile_size",
+          "custom.surface_finish",
+          "custom.color_tone",
+          "custom.unit_type",
+          "custom.pieces_per_box",
+          "custom.thickness_mm",
+          "custom.water_absorption",
+          "custom.traffic_rating",
+          "custom.slip_resistant",
+          "custom.rectified",
+          "custom.application_area",
+          "custom.suitable_for",
+          "custom.material_type",
+          "custom.print_technology",
+          "custom.features",
+          "weight",
+          "product_category",
+          "description",
+        ],
+        [
+          {
+            "custom.item_code": "16MEA",
+            "custom.tile_size": "30x90 CM",
+            "custom.surface_finish": "Matte",
+            "custom.color_tone": "",
+            "custom.unit_type": "",
+            "custom.pieces_per_box": "",
+            "custom.thickness_mm": "",
+            "custom.water_absorption": "",
+            "custom.traffic_rating": "",
+            "custom.slip_resistant": "",
+            "custom.rectified": "Yes",
+            "custom.application_area": "Wall; Indoor; Outdoor",
+            "custom.suitable_for":
+              "Living rooms; Bedrooms; Bathrooms; Kitchens",
+            "custom.material_type": "Porcelain",
+            "custom.print_technology": "",
+            "custom.features":
+              "Porcelain; Stain-resistant; Non-water appearance",
+            weight: "",
+            product_category: "Tiles",
+            description: "Woven patterned",
+          },
+        ],
+      ),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-16MEA",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const metafields = scan.candidates[0].metafields;
+
+    expect(metafields.tileSize).toBe("30x90 cm");
+    expect(metafields.surfaceFinish).toEqual(["Matte"]);
+    expect(metafields.rectified).toBe(true);
+    expect(metafields.applicationArea).toEqual(["Wall", "Indoor", "Outdoor"]);
+    expect(metafields.materialType).toEqual(["Porcelain"]);
+    expect(metafields.features).toEqual([
+      "Porcelain",
+      "Stain-Resistant",
+      "Non-Water Appearance",
+    ]);
+  });
+
+  it("maps custom metafield headers without crossing features into print technology", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBufferWithHeaders(
+        [
+          "custom.item_code",
+          "custom.tile_size",
+          "custom.rectified",
+          "custom.features",
+          "custom.print_technology",
+          "product_category",
+          "description",
+        ],
+        [
+          {
+            "custom.item_code": "CUSTOM1",
+            "custom.tile_size": "60x60 CM",
+            "custom.rectified": "Yes",
+            "custom.features": "Stain resistant; Non-water appearance",
+            "custom.print_technology": "Inkjet print",
+            product_category: "Tiles",
+            description: "Sample description",
+          },
+        ],
+      ),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-CUSTOM1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const metafields = scan.candidates[0].metafields;
+
+    expect(scan.candidates[0].descriptionDataStatus).toBe("matched");
+    expect(metafields.rectified).toBe(true);
+    expect(metafields.features).toEqual([
+      "Stain Resistant",
+      "Non-Water Appearance",
+    ]);
+    expect(metafields.printTechnology).toEqual(["Inkjet Print"]);
+  });
+
+  it("leaves workbook metafields blank when their custom columns are blank", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBufferWithHeaders(
+        [
+          "custom.item_code",
+          "custom.tile_size",
+          "custom.features",
+          "custom.print_technology",
+          "custom.material_type",
+          "custom.traffic_rating",
+          "custom.color_tone",
+          "custom.rectified",
+          "product_category",
+          "description",
+        ],
+        [
+          {
+            "custom.item_code": "CUSTOM2",
+            "custom.tile_size": "30x90 CM",
+            "custom.features":
+              "Porcelain; Stain-resistant; Non-water appearance; Inkjet print",
+            "custom.print_technology": "",
+            "custom.material_type": "",
+            "custom.traffic_rating": "",
+            "custom.color_tone": "",
+            "custom.rectified": "",
+            product_category: "Tiles",
+            description: "Woven patterned",
+          },
+        ],
+      ),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-CUSTOM2",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const metafields = scan.candidates[0].metafields;
+
+    expect(metafields.features).toEqual([
+      "Porcelain",
+      "Stain-Resistant",
+      "Non-Water Appearance",
+      "Inkjet Print",
+    ]);
+    expect(metafields.printTechnology).toEqual([]);
+    expect(metafields.materialType).toEqual([]);
+    expect(metafields.trafficRating).toEqual([]);
+    expect(metafields.colorTone).toEqual([]);
+    expect(metafields.rectified).toBe(null);
+  });
+
+  it("splits application area from semicolon variants into a Shopify list", () => {
+    const catalog = parseMigrationDescriptionWorkbook(
+      workbookBuffer([
+        {
+          "Item Code": "APP1",
+          "Product Category": "Tiles",
+          "Description (clean)": "Wall tile",
+          "Application area": "Wall； Indoor &#59; Outdoor",
+        },
+      ]),
+    );
+    const scan = buildProductMigrationScan(
+      [
+        product("LUZ", {
+          variants: {
+            nodes: [
+              {
+                ...product("LUZ").variants.nodes[0],
+                sku: "LUZ-APP1",
+              },
+            ],
+          },
+        }),
+      ],
+      { descriptionCatalog: catalog },
+    );
+    const input = metafieldInputs(scan.candidates[0].metafields).find(
+      (item) => item.key === "application_area",
+    );
+
+    expect(scan.candidates[0].metafields.applicationArea).toEqual([
+      "Wall",
+      "Indoor",
+      "Outdoor",
+    ]);
+    expect(input).toMatchObject({
+      type: "list.single_line_text_field",
+      value: JSON.stringify(["Wall", "Indoor", "Outdoor"]),
+    });
   });
 
   it("does not populate text metafields from raw Excel serial numbers", () => {
@@ -622,7 +1154,7 @@ describe("product migration Excel description enrichment", () => {
     expect(scan.candidates[0].metafields.surfaceFinish).toEqual([]);
   });
 
-  it("categorizes sample text into description, color tone, finish, application, and suitable-for metafields", () => {
+  it("maps workbook text into description, taxonomy, and list metafields", () => {
     const catalog = parseMigrationDescriptionWorkbook(
       workbookBuffer([
         {
@@ -656,16 +1188,19 @@ describe("product migration Excel description enrichment", () => {
       "Stain Resistant",
       "Non Water Appearance",
       "Glazed",
-      "Rectified",
+      "0.07% Water Absorption",
+      "Good For High Traffic Areas",
+      "9.5mm Thickness",
       "Inkjet Print Technology",
+      "Rectified",
     ]);
-    expect(candidate.metafields.colorTone).toEqual(["Dark Gray"]);
-    expect(candidate.metafields.waterAbsorption).toBe("0.07%");
-    expect(candidate.metafields.trafficRating).toEqual(["High"]);
+    expect(candidate.metafields.colorTone).toEqual([]);
+    expect(candidate.metafields.waterAbsorption).toBe(null);
+    expect(candidate.metafields.trafficRating).toEqual([]);
     expect(candidate.metafields.materialType).toEqual([]);
-    expect(candidate.metafields.printTechnology).toEqual(["Inkjet Print"]);
-    expect(candidate.metafields.thicknessMm).toBe("9.5");
-    expect(candidate.metafields.rectified).toBe(true);
+    expect(candidate.metafields.printTechnology).toEqual([]);
+    expect(candidate.metafields.thicknessMm).toBe(null);
+    expect(candidate.metafields.rectified).toBe(null);
     expect(candidate.metafields.applicationArea).toEqual([
       "Floor",
       "Wall",
@@ -700,8 +1235,11 @@ describe("product migration Excel description enrichment", () => {
         "Stain Resistant",
         "Non Water Appearance",
         "Glazed",
-        "Rectified",
+        "0.07% Water Absorption",
+        "Good For High Traffic Areas",
+        "9.5mm Thickness",
         "Inkjet Print Technology",
+        "Rectified",
       ]),
     });
     expect(
@@ -719,7 +1257,7 @@ describe("product migration Excel description enrichment", () => {
     ).toBe(false);
   });
 
-  it("recognizes taxonomy phrases from both description and features", () => {
+  it("keeps direct workbook features as list items", () => {
     const catalog = parseMigrationDescriptionWorkbook(
       workbookBuffer([
         {
@@ -743,15 +1281,16 @@ describe("product migration Excel description enrichment", () => {
     const metafields = scan.candidates[0].metafields;
 
     expect(metafields.surfaceFinish).toEqual(["Semi Polished"]);
-    expect(metafields.colorTone).toEqual(["Light Gray"]);
-    expect(metafields.materialType).toEqual(["Porcelain"]);
+    expect(metafields.colorTone).toEqual([]);
+    expect(metafields.materialType).toEqual([]);
     expect(metafields.features).toEqual([
-      "Stain Resistant",
       "Digital Print Technology",
+      "Good For High Traffic Areas",
+      "0.07% Water Absorption",
     ]);
-    expect(metafields.printTechnology).toEqual(["Digital Print"]);
-    expect(metafields.trafficRating).toEqual(["High"]);
-    expect(metafields.waterAbsorption).toBe("0.07%");
+    expect(metafields.printTechnology).toEqual([]);
+    expect(metafields.trafficRating).toEqual([]);
+    expect(metafields.waterAbsorption).toBe(null);
   });
 
   it("does not split grout color names into tile material values", () => {
@@ -782,7 +1321,7 @@ describe("product migration Excel description enrichment", () => {
     );
     const metafields = scan.candidates[0].metafields;
 
-    expect(metafields.colorTone).toEqual(["Porcelain White"]);
+    expect(metafields.colorTone).toEqual([]);
     expect(metafields.materialType).toEqual([]);
   });
 

@@ -52,8 +52,8 @@ export type ProductMigrationLocationName = "Lusterplus Inc." | "ARTEMISIA CEBU" 
 export type ProductMigrationMetafields = {
   itemCode: string;
   tileSize: string | null;
+  unitType: string | null;
   piecesPerBox: string | null;
-  box: string | null;
   surfaceFinish: string[];
   features: string[];
   materialType: string[];
@@ -61,7 +61,8 @@ export type ProductMigrationMetafields = {
   colorTone: string[];
   waterAbsorption: string | null;
   thicknessMm: string | null;
-  rectified: boolean;
+  slipResistant: boolean | null;
+  rectified: boolean | null;
   trafficRating: string[];
   applicationArea: string[];
   suitableFor: string[];

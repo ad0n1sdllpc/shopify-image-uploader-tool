@@ -41,8 +41,8 @@ const regionAvailabilityByPrefix: Record<RegionalPrefix, string> = {
 const METAFIELD_KEYS = {
   itemCode: "custom.item_code",
   tileSize: "custom.tile_size",
+  unitType: "custom.unit_type",
   piecesPerBox: "custom.pieces_per_box",
-  box: "custom.box",
   surfaceFinish: "custom.surface_finish",
   features: "custom.features",
   materialType: "custom.material_type",
@@ -50,6 +50,7 @@ const METAFIELD_KEYS = {
   colorTone: "custom.color_tone",
   waterAbsorption: "custom.water_absorption",
   thicknessMm: "custom.thickness_mm",
+  slipResistant: "custom.slip_resistant",
   rectified: "custom.rectified",
   trafficRating: "custom.traffic_rating",
   applicationArea: "custom.application_area",
@@ -138,6 +139,7 @@ type RegionalProductIdentity = {
 export type ProductMigrationDescriptionRow = {
   itemCode: string;
   size: string | null;
+  unitType: string | null;
   piecesPerBox: string | null;
   category: string | null;
   description: string | null;
@@ -151,6 +153,7 @@ export type ProductMigrationDescriptionRow = {
   waterAbsorption: string | null;
   thickness: string | null;
   trafficRating: string | null;
+  slipResistant: string | null;
   rectified: string | null;
   materialType: string | null;
   printTechnology: string | null;
@@ -521,7 +524,7 @@ export async function scanProductMigrations(
 ): Promise<ProductMigrationScanResult> {
   const products = await fetchMigrationProducts([]);
   const descriptionCatalog = descriptionWorkbook
-    ? parseMigrationDescriptionWorkbook(descriptionWorkbook)
+    ? parseMigrationDescriptionFile(descriptionWorkbook)
     : null;
   return {
     scannedAt: new Date().toISOString(),
@@ -540,7 +543,7 @@ export async function migrateRegionalProducts(
 
   const products = await fetchMigrationProducts(normalizedBaseSkus);
   const descriptionCatalog = descriptionWorkbook
-    ? parseMigrationDescriptionWorkbook(descriptionWorkbook)
+    ? parseMigrationDescriptionFile(descriptionWorkbook)
     : null;
   const locationsByName = await fetchLocationsByName();
   const publicationIds = await fetchPublicationIds();
@@ -677,8 +680,8 @@ export function extractMigrationMetafields(
   return {
     itemCode: baseSku,
     tileSize: extractTileSize(tags, searchableText),
+    unitType: null,
     piecesPerBox: null,
-    box: null,
     surfaceFinish: extractSurfaceFinishes(tags, searchableText),
     features: extractFeatures(searchableText),
     materialType: extractMaterialTypes(productDescription),
@@ -686,6 +689,7 @@ export function extractMigrationMetafields(
     colorTone: extractColorTones(productDescription),
     waterAbsorption: extractWaterAbsorption(productDescription),
     thicknessMm: extractThicknessMm(productDescription),
+    slipResistant: null,
     rectified: /\brectified\b/i.test(productDescription),
     trafficRating: extractTrafficRatings(productDescription),
     applicationArea: extractApplicationAreas(tags.join("; ")),
@@ -738,6 +742,96 @@ export function parseMigrationDescriptionWorkbook(
   }
 
   return { rowsByItemCode, duplicateItemCodes };
+}
+
+export function parseMigrationDescriptionFile(
+  fileBuffer: Buffer,
+): ProductMigrationDescriptionCatalog {
+  return isZipWorkbookBuffer(fileBuffer)
+    ? parseMigrationDescriptionWorkbook(fileBuffer)
+    : parseMigrationDescriptionCsv(fileBuffer);
+}
+
+function parseMigrationDescriptionCsv(
+  csvBuffer: Buffer,
+): ProductMigrationDescriptionCatalog {
+  const text = csvBuffer.toString("utf8").replace(/^\uFEFF/, "");
+  const records = parseCsvRecords(text);
+  if (records.length === 0) return emptyDescriptionCatalog();
+
+  const [headers, ...rows] = records;
+  const normalizedHeaders = headers.map((header) => header.trim());
+  const rowsByItemCode = new Map<string, ProductMigrationDescriptionRow>();
+  const duplicateItemCodes = new Set<string>();
+
+  for (const values of rows) {
+    const rawRow = Object.fromEntries(
+      normalizedHeaders.map((header, index) => [header, values[index] ?? ""]),
+    );
+    const row = descriptionRowFromWorksheetRow(rawRow);
+    if (!row.itemCode) continue;
+
+    const key = normalizeDescriptionLookupKey(row.itemCode);
+    if (rowsByItemCode.has(key)) {
+      duplicateItemCodes.add(key);
+      continue;
+    }
+    rowsByItemCode.set(key, row);
+  }
+
+  return { rowsByItemCode, duplicateItemCodes };
+}
+
+function parseCsvRecords(csvText: string) {
+  const records: string[][] = [];
+  let currentField = "";
+  let currentRow: string[] = [];
+  let inQuotes = false;
+
+  for (let index = 0; index < csvText.length; index += 1) {
+    const char = csvText[index];
+    const nextChar = csvText[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentField += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      currentRow.push(currentField);
+      currentField = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") index += 1;
+      currentRow.push(currentField);
+      if (currentRow.some((value) => value.length > 0)) records.push(currentRow);
+      currentField = "";
+      currentRow = [];
+      continue;
+    }
+
+    currentField += char;
+  }
+
+  currentRow.push(currentField);
+  if (currentRow.some((value) => value.length > 0)) records.push(currentRow);
+
+  return records;
+}
+
+function emptyDescriptionCatalog(): ProductMigrationDescriptionCatalog {
+  return { rowsByItemCode: new Map(), duplicateItemCodes: new Set() };
+}
+
+function isZipWorkbookBuffer(buffer: Buffer) {
+  return buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50;
 }
 
 function unzipWorkbookFiles(buffer: Buffer) {
@@ -812,19 +906,23 @@ function firstWorksheetPath(files: Map<string, string>) {
   if (!workbookXml || !workbookRelsXml)
     throw new Error("Description workbook is missing workbook metadata.");
 
-  const firstSheet = workbookXml.match(/<sheet\b[^>]*r:id="([^"]+)"/);
+  const firstSheet = workbookXml.match(
+    /<(?:[\w-]+:)?sheet\b[^>]*\br:id="([^"]+)"/,
+  );
   if (!firstSheet) throw new Error("Description workbook has no sheets.");
 
-  const relationship = new RegExp(
-    `<Relationship\\b[^>]*Id="${escapeRegExp(firstSheet[1])}"[^>]*Target="([^"]+)"`,
-  ).exec(workbookRelsXml);
-  if (!relationship)
+  const relationship = Array.from(
+    workbookRelsXml.matchAll(/<Relationship\b[^>]*>/g),
+  ).find((match) => {
+    const tag = match[0];
+    return new RegExp(`\\bId="${escapeRegExp(firstSheet[1])}"`).test(tag);
+  });
+  const target = relationship?.[0].match(/\bTarget="([^"]+)"/)?.[1];
+  if (!target)
     throw new Error("Description workbook is missing worksheet metadata.");
 
   return normalizeZipPath(
-    relationship[1].startsWith("/")
-      ? relationship[1].slice(1)
-      : `xl/${relationship[1]}`,
+    target.startsWith("/") ? target.slice(1) : `xl/${target}`,
   );
 }
 
@@ -834,8 +932,14 @@ function normalizeZipPath(value: string) {
 
 function parseSharedStrings(xml: string | undefined) {
   if (!xml) return [];
-  return Array.from(xml.matchAll(/<si\b[\s\S]*?<\/si>/g)).map((match) =>
-    Array.from(match[0].matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g))
+  return Array.from(
+    xml.matchAll(/<(?:[\w-]+:)?si\b[\s\S]*?<\/(?:[\w-]+:)?si>/g),
+  ).map((match) =>
+    Array.from(
+      match[0].matchAll(
+        /<(?:[\w-]+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w-]+:)?t>/g,
+      ),
+    )
       .map((textMatch) => decodeXml(textMatch[1]))
       .join(""),
   );
@@ -845,14 +949,18 @@ function worksheetRows(
   sheetXml: string,
   sharedStrings: string[],
 ): Record<string, string>[] {
-  const rawRows = Array.from(sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g))
+  const rawRows = Array.from(
+    sheetXml.matchAll(/<(?:[\w-]+:)?row\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?row>/g),
+  )
     .map((rowMatch) =>
-      Array.from(rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)).map(
-        (cellMatch) => ({
-          column: cellColumn(cellMatch[1]),
-          value: cellValue(cellMatch[1], cellMatch[2], sharedStrings),
-        }),
-      ),
+      Array.from(
+        rowMatch[1].matchAll(
+          /<(?:[\w-]+:)?c\b([^>]*)>([\s\S]*?)<\/(?:[\w-]+:)?c>/g,
+        ),
+      ).map((cellMatch) => ({
+        column: cellColumn(cellMatch[1]),
+        value: cellValue(cellMatch[1], cellMatch[2], sharedStrings),
+      })),
     )
     .filter((row) => row.length > 0);
   const headerRow = rawRows[0] ?? [];
@@ -882,12 +990,17 @@ function cellValue(
 ) {
   const type = attributes.match(/\bt="([^"]+)"/)?.[1];
   if (type === "inlineStr") {
-    return Array.from(cellXml.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g))
+    return Array.from(
+      cellXml.matchAll(
+        /<(?:[\w-]+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w-]+:)?t>/g,
+      ),
+    )
       .map((match) => decodeXml(match[1]))
       .join("");
   }
 
-  const value = cellXml.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? "";
+  const value =
+    cellXml.match(/<(?:[\w-]+:)?v>([\s\S]*?)<\/(?:[\w-]+:)?v>/)?.[1] ?? "";
   if (type === "s") return sharedStrings[Number(value)] ?? "";
   return decodeXml(value);
 }
@@ -898,48 +1011,108 @@ function descriptionRowFromWorksheetRow(
   const finish = nullableWorksheetStringAny(row, [
     "Finish",
     "Surface finish",
+    "custom.surface_finish",
   ]);
   const features =
-    nullableWorksheetStringAny(row, ["Features"]) ??
+    nullableWorksheetStringAny(row, [
+      "Features",
+      "Feature",
+      "Product Features",
+      "Tile Features",
+      "custom.features",
+    ]) ??
     (finish && /^features\s*:/i.test(finish) ? finish : null);
 
   return {
-    itemCode: worksheetStringAny(row, ["Item Code"]),
-    size: nullableWorksheetStringAny(row, ["SIZE", "Tile Size"]),
+    itemCode: worksheetStringAny(row, ["Item Code", "custom.item_code"]),
+    size: nullableWorksheetStringAny(row, [
+      "SIZE",
+      "Tile Size",
+      "custom.tile_size",
+    ]),
+    unitType: nullableWorksheetStringAny(row, ["Unit Type", "custom.unit_type"]),
     piecesPerBox: nullableWorksheetStringAny(row, [
       "Number of Pieces per box",
+      "Number of Pieces per Box",
       "Pieces Per Box",
       "Pieces per box",
+      "Pieces per Box",
+      "No. of Pieces per box",
+      "No. of Pieces per Box",
+      "No. of pieces per box",
+      "No of Pieces per box",
+      "No of Pieces per Box",
+      "custom.pieces_per_box",
     ]),
-    category: nullableWorksheetStringAny(row, ["Category", "Product Category"]),
+    category: nullableWorksheetStringAny(row, [
+      "Category",
+      "Product Category",
+      "product_category",
+    ]),
     description: nullableWorksheetStringAny(row, [
       "Description",
       "Description (clean)",
+      "description",
+      "description_clean",
     ]),
-    colorTone: nullableWorksheetStringAny(row, ["Color Tone"]),
+    colorTone: nullableWorksheetStringAny(row, [
+      "Color Tone",
+      "custom.color_tone",
+    ]),
     weight: nullableWorksheetStringAny(row, ["Weight"]),
     features,
     finish: features === finish ? null : finish,
     application: nullableWorksheetStringAny(row, [
       "Application",
       "Application area",
+      "custom.application_area",
     ]),
-    suitableFor: nullableWorksheetStringAny(row, ["Suitable For"]),
-    surface: nullableWorksheetStringAny(row, ["Surface", "Surface finish"]),
-    waterAbsorption: nullableWorksheetStringAny(row, ["Water absorption"]),
-    thickness: nullableWorksheetStringAny(row, ["Thickness(mm)", "Thickness"]),
-    trafficRating: nullableWorksheetStringAny(row, ["Traffic rating"]),
-    rectified: nullableWorksheetStringAny(row, ["Rectified"]),
-    materialType: nullableWorksheetStringAny(row, ["Material Type"]),
-    printTechnology: nullableWorksheetStringAny(row, ["Print Technology"]),
+    suitableFor: nullableWorksheetStringAny(row, [
+      "Suitable For",
+      "custom.suitable_for",
+    ]),
+    surface: nullableWorksheetStringAny(row, [
+      "Surface",
+      "Surface finish",
+      "custom.surface_finish",
+    ]),
+    waterAbsorption: nullableWorksheetStringAny(row, [
+      "Water absorption",
+      "custom.water_absorption",
+    ]),
+    thickness: nullableWorksheetStringAny(row, [
+      "Thickness(mm)",
+      "Thickness",
+      "custom.thickness_mm",
+    ]),
+    trafficRating: nullableWorksheetStringAny(row, [
+      "Traffic rating",
+      "custom.traffic_rating",
+    ]),
+    slipResistant: nullableWorksheetStringAny(row, [
+      "Slip resistant",
+      "custom.slip_resistant",
+    ]),
+    rectified: nullableWorksheetStringAny(row, [
+      "Rectified",
+      "custom.rectified",
+    ]),
+    materialType: nullableWorksheetStringAny(row, [
+      "Material Type",
+      "custom.material_type",
+    ]),
+    printTechnology: nullableWorksheetStringAny(row, [
+      "Print Technology",
+      "custom.print_technology",
+    ]),
     disclaimer: nullableWorksheetStringAny(row, ["Disclaimer"]),
   };
 }
 
 function worksheetString(row: Record<string, unknown>, header: string) {
-  const value = row[header];
-  if (value === null || value === undefined) return "";
-  return normalizeWorksheetString(String(value), header);
+  const match = worksheetValueByHeader(row, header);
+  if (!match) return "";
+  return normalizeWorksheetString(String(match.value), match.header);
 }
 
 function nullableWorksheetString(row: Record<string, unknown>, header: string) {
@@ -955,6 +1128,22 @@ function worksheetStringAny(row: Record<string, unknown>, headers: string[]) {
   return "";
 }
 
+function worksheetValueByHeader(row: Record<string, unknown>, header: string) {
+  const directValue = row[header];
+  if (directValue !== null && directValue !== undefined) {
+    return { header, value: directValue };
+  }
+
+  const normalizedHeader = normalizeWorksheetHeader(header);
+  for (const [candidateHeader, candidateValue] of Object.entries(row)) {
+    if (normalizeWorksheetHeader(candidateHeader) !== normalizedHeader) continue;
+    if (candidateValue === null || candidateValue === undefined) continue;
+    return { header: candidateHeader, value: candidateValue };
+  }
+
+  return null;
+}
+
 function nullableWorksheetStringAny(
   row: Record<string, unknown>,
   headers: string[],
@@ -967,7 +1156,7 @@ function normalizeWorksheetString(value: string, header: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
 
-  const normalizedHeader = header.trim().toLowerCase();
+  const normalizedHeader = normalizeWorksheetHeader(header);
   if (
     isRawExcelSerialNumber(trimmed) &&
     !numericWorkbookHeaders.has(normalizedHeader)
@@ -978,12 +1167,20 @@ function normalizeWorksheetString(value: string, header: string) {
   return trimmed;
 }
 
+function normalizeWorksheetHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 const numericWorkbookHeaders = new Set([
   "item code",
   "number of pieces per box",
   "pieces per box",
   "weight",
-]);
+].map(normalizeWorksheetHeader));
 
 function isRawExcelSerialNumber(value: string) {
   if (!/^\d{4,6}(?:\.\d+)?$/.test(value)) return false;
@@ -1038,31 +1235,13 @@ function metafieldsFromDescriptionRow(
   row: ProductMigrationDescriptionRow,
   availablePrefixes: RegionalPrefix[],
 ): ProductMigrationMetafields {
-  const productDescription = plainTextFromHtml(
-    descriptionHtmlFromDescriptionRow(row),
-  );
-  const descriptionText = [
-    row.description,
-    row.colorTone,
-    row.features,
-    row.finish,
-    row.application,
-    row.suitableFor,
-    row.surface,
-    row.waterAbsorption,
-    row.thickness,
-    row.trafficRating,
-    row.rectified,
-    row.materialType,
-    row.printTechnology,
-    row.category,
-  ]
-    .filter((value): value is string => Boolean(value))
-    .join(" ");
   const directSurfaceFinishes = parseDelimitedValues(
     [row.surface, row.finish].filter(Boolean).join("; "),
   );
   const directColorTones = parseDelimitedValues(row.colorTone, {
+    preserveContainedValues: true,
+  });
+  const directFeatures = parseDelimitedValues(row.features, {
     preserveContainedValues: true,
   });
   const directMaterialTypes = parseDelimitedValues(row.materialType);
@@ -1071,56 +1250,34 @@ function metafieldsFromDescriptionRow(
   const directApplicationAreas = parseDelimitedValues(row.application, {
     splitWords: true,
   });
+  const slipResistant = parseWorksheetBoolean(row.slipResistant);
   const rectified = parseWorksheetBoolean(row.rectified);
-  const productCategory = categoryValue(row.category) ?? row.category ?? "";
+  const piecesPerBox = normalizeIntegerValue(row.piecesPerBox);
+  const unitType = normalizeSingleLineText(row.unitType);
+  const workbookDisclaimer = cleanLabeledValue(row.disclaimer, "Disclaimer");
+  const category = categoryValue(row.category);
 
   return {
     itemCode: row.itemCode || baseSku,
-    tileSize: extractTileSize([row.size ?? ""], descriptionText),
-    piecesPerBox: normalizeSingleLineText(row.piecesPerBox),
-    box: normalizeSingleLineText(row.piecesPerBox) ? "Box" : null,
-    surfaceFinish: directSurfaceFinishes.length
-      ? directSurfaceFinishes
-      : extractSurfaceFinishes([row.surface ?? "", row.finish ?? ""], descriptionText),
-    features: extractFeatures(descriptionText),
-    materialType: directMaterialTypes.length
-      ? directMaterialTypes
-      : extractMaterialTypes(
-          descriptionText,
-          [row.category, row.description].filter(Boolean).join(" "),
-        ),
-    printTechnology: directPrintTechnologies.length
-      ? directPrintTechnologies
-      : extractPrintTechnologies(descriptionText),
-    colorTone: directColorTones.length ? directColorTones : extractColorTones(descriptionText),
-    waterAbsorption:
-      cleanLabeledValue(row.waterAbsorption, "Water absorption") ??
-      extractWaterAbsorption(descriptionText),
-    thicknessMm:
-      normalizeThicknessValue(row.thickness) ?? extractThicknessMm(descriptionText),
-    rectified: rectified ?? /\brectified\b/i.test(descriptionText),
-    trafficRating: directTrafficRatings.length
-      ? directTrafficRatings
-      : extractTrafficRatings(descriptionText),
-    applicationArea: directApplicationAreas.length
-      ? directApplicationAreas
-      : extractApplicationAreas(
-          [row.application, row.description].filter(Boolean).join("; "),
-        ),
+    tileSize: normalizeTileSizeValue(row.size),
+    unitType,
+    piecesPerBox,
+    surfaceFinish: directSurfaceFinishes,
+    features: directFeatures,
+    materialType: directMaterialTypes,
+    printTechnology: directPrintTechnologies,
+    colorTone: directColorTones,
+    waterAbsorption: cleanLabeledValue(row.waterAbsorption, "Water absorption"),
+    thicknessMm: normalizeThicknessValue(row.thickness),
+    slipResistant,
+    rectified,
+    trafficRating: directTrafficRatings,
+    applicationArea: directApplicationAreas,
     suitableFor: extractSuitableForValues(row.suitableFor ?? ""),
     regionAvailability: regionAvailabilityFromPrefixes(availablePrefixes),
     disclaimer:
-      cleanLabeledValue(row.disclaimer, "Disclaimer") ??
-      defaultDisclaimerForCategory(productCategory),
+      workbookDisclaimer ?? defaultDisclaimerForProductType(category),
   };
-}
-
-function defaultDisclaimerForCategory(category: string) {
-  const normalized = category.trim().toLowerCase();
-  if (normalized === "tiles" || normalized === "vinyl") {
-    return "Color of website images may vary slightly from actual products.";
-  }
-  return null;
 }
 
 function regionAvailabilityFromPrefixes(prefixes: RegionalPrefix[]) {
@@ -1167,23 +1324,59 @@ function parseDelimitedValues(
   value: string | null | undefined,
   options: { splitWords?: boolean; preserveContainedValues?: boolean } = {},
 ) {
-  const cleaned = cleanKnownLabels(value);
+  const cleaned = cleanKnownLabels(value).replace(/\r\n|\r|\n/g, ";");
   if (!cleaned) return [];
   const wordSplit = options.splitWords ? "\\b(?:or|and)\\b|" : "";
-  const delimiter = new RegExp(`${wordSplit}[;,/|]+`, "gi");
+  const delimiter = new RegExp(`${wordSplit}(?:&semi;|&#59;|[;；,、/|])+`, "gi");
   const values = cleaned
     .replace(delimiter, ";")
+    .replace(/(?:&semi;|&#59;|[；、])/gi, ";")
     .split(";")
-    .map((item) => titleCase(item.replace(/\s+/g, " ").trim()))
-    .filter(Boolean);
+    .map(normalizeDelimitedValue)
+    .filter((item): item is string => Boolean(item));
   return options.preserveContainedValues
     ? uniqueValues(values)
     : removeContainedValues(values);
 }
 
+function normalizeDelimitedValue(value: string) {
+  const cleaned = value
+    .replace(/\s+/g, " ")
+    .replace(/^[\s-]+|[\s.,;:]+$/g, "")
+    .trim();
+  if (!cleaned) return null;
+  if (isRawExcelSerialNumber(cleaned) || /^\d+(?:\.\d+)?$/.test(cleaned)) {
+    return null;
+  }
+  return titleCase(cleaned);
+}
+
 function normalizeSingleLineText(value: string | null | undefined) {
   const cleaned = cleanKnownLabels(value).replace(/\s+/g, " ").trim();
   return cleaned || null;
+}
+
+function normalizeIntegerValue(value: string | null | undefined) {
+  const cleaned = cleanKnownLabels(value).replace(/,/g, "").trim();
+  if (!cleaned) return null;
+
+  const exactInteger = cleaned.match(/^(\d+)(?:\.0+)?$/);
+  if (exactInteger) return String(Number(exactInteger[1]));
+
+  const labeledInteger = cleaned.match(/^(\d+)\s*(?:pcs?|pieces?|per box)?$/i);
+  if (labeledInteger) return String(Number(labeledInteger[1]));
+
+  return null;
+}
+
+function normalizeTileSizeValue(value: string | null | undefined) {
+  const cleaned = normalizeSingleLineText(value);
+  if (!cleaned) return null;
+
+  const match = cleaned.match(/\b(\d{2,3})\s*x\s*(\d{2,3})\s*(cm|mm)?\b/i);
+  if (!match) return cleaned;
+  const unit = match[3] ? ` ${match[3].toLowerCase()}` : "";
+  return `${match[1]}x${match[2]}${unit}`;
 }
 
 function parseWorksheetBoolean(value: string | null | undefined) {
@@ -1232,6 +1425,17 @@ function parseShippingWeight(
 
 function categoryValue(value: string | null | undefined) {
   return cleanLabeledValue(value ?? null, "Category");
+}
+
+function defaultDisclaimerForProductType(
+  productType: string | null | undefined,
+) {
+  const normalized = productType?.trim().toLowerCase() ?? "";
+  if (!normalized) return null;
+  if (normalized.includes("tile") || normalized.includes("vinyl")) {
+    return "Color of website images may vary slightly from actual products.";
+  }
+  return null;
 }
 
 function escapeHtml(value: string) {
@@ -1304,6 +1508,20 @@ async function migrateProductCandidate(
 
   try {
     const metafields = metafieldInputs(candidate.metafields);
+    if (candidate.baseSku === "16MEA") {
+      console.info(
+        `[product-migration][16MEA] ${JSON.stringify(
+          {
+            baseSku: candidate.baseSku,
+            productType: candidate.productType,
+            descriptionSource: candidate.descriptionDataSource,
+            metafields,
+          },
+          null,
+          2,
+        )}`,
+      );
+    }
     const created = await createDraftProduct(candidate, metafields);
     createdProductId = created.id;
     const variant = created.variants.nodes[0];
@@ -1706,6 +1924,7 @@ function normalizeTagSet(tags: string[]) {
 function missingMetafieldNames(metafields: ProductMigrationMetafields) {
   const missing: string[] = [];
   if (!metafields.tileSize) missing.push(METAFIELD_KEYS.tileSize);
+  if (!metafields.unitType) missing.push(METAFIELD_KEYS.unitType);
   if (!metafields.piecesPerBox) missing.push(METAFIELD_KEYS.piecesPerBox);
   if (metafields.surfaceFinish.length === 0)
     missing.push(METAFIELD_KEYS.surfaceFinish);
@@ -1719,11 +1938,13 @@ function missingMetafieldNames(metafields: ProductMigrationMetafields) {
   if (metafields.thicknessMm === null) missing.push(METAFIELD_KEYS.thicknessMm);
   if (metafields.trafficRating.length === 0)
     missing.push(METAFIELD_KEYS.trafficRating);
+  if (metafields.slipResistant === null)
+    missing.push(METAFIELD_KEYS.slipResistant);
+  if (metafields.rectified === null) missing.push(METAFIELD_KEYS.rectified);
   if (metafields.applicationArea.length === 0)
     missing.push(METAFIELD_KEYS.applicationArea);
   if (metafields.suitableFor.length === 0)
     missing.push(METAFIELD_KEYS.suitableFor);
-  if (!metafields.disclaimer) missing.push(METAFIELD_KEYS.disclaimer);
   return missing;
 }
 
@@ -1737,16 +1958,6 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
           metafields.tileSize,
         )
       : null,
-    metafields.piecesPerBox
-      ? metafieldInput(
-          "pieces_per_box",
-          "single_line_text_field",
-          metafields.piecesPerBox,
-        )
-      : null,
-    metafields.box
-      ? metafieldInput("box", "single_line_text_field", metafields.box)
-      : null,
     metafields.surfaceFinish.length
       ? metafieldInput(
           "surface_finish",
@@ -1754,11 +1965,62 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
           listMetafieldValue(metafields.surfaceFinish),
         )
       : null,
-    metafields.features.length
+    metafields.colorTone.length
       ? metafieldInput(
-          "features",
+          "color_tone",
           "list.single_line_text_field",
-          listMetafieldValue(metafields.features),
+          listMetafieldValue(metafields.colorTone),
+        )
+      : null,
+    metafields.unitType
+      ? metafieldInput("unit_type", "single_line_text_field", metafields.unitType)
+      : null,
+    metafields.piecesPerBox
+      ? metafieldInput(
+          "pieces_per_box",
+          "number_integer",
+          metafields.piecesPerBox,
+        )
+      : null,
+    metafields.thicknessMm !== null
+      ? metafieldInput(
+          "thickness_mm",
+          "single_line_text_field",
+          metafields.thicknessMm,
+        )
+      : null,
+    metafields.waterAbsorption
+      ? metafieldInput(
+          "water_absorption",
+          "single_line_text_field",
+          metafields.waterAbsorption,
+        )
+      : null,
+    metafields.trafficRating.length
+      ? metafieldInput(
+          "traffic_rating",
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.trafficRating),
+        )
+      : null,
+    metafields.slipResistant !== null
+      ? metafieldInput("slip_resistant", "boolean", String(metafields.slipResistant))
+      : null,
+    metafields.rectified !== null
+      ? metafieldInput("rectified", "boolean", String(metafields.rectified))
+      : null,
+    metafields.applicationArea.length
+      ? metafieldInput(
+          "application_area",
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.applicationArea),
+        )
+      : null,
+    metafields.suitableFor.length
+      ? metafieldInput(
+          "suitable_for",
+          "list.single_line_text_field",
+          listMetafieldValue(metafields.suitableFor),
         )
       : null,
     metafields.materialType.length
@@ -1775,47 +2037,11 @@ export function metafieldInputs(metafields: ProductMigrationMetafields) {
           listMetafieldValue(metafields.printTechnology),
         )
       : null,
-    metafields.colorTone.length
+    metafields.features.length
       ? metafieldInput(
-          "color_tone",
+          "features",
           "list.single_line_text_field",
-          listMetafieldValue(metafields.colorTone),
-        )
-      : null,
-    metafields.waterAbsorption
-      ? metafieldInput(
-          "water_absorption",
-          "single_line_text_field",
-          metafields.waterAbsorption,
-        )
-      : null,
-    metafields.thicknessMm !== null
-      ? metafieldInput(
-          "thickness_mm",
-          "single_line_text_field",
-          metafields.thicknessMm,
-        )
-      : null,
-    metafieldInput("rectified", "boolean", String(metafields.rectified)),
-    metafields.trafficRating.length
-      ? metafieldInput(
-          "traffic_rating",
-          "list.single_line_text_field",
-          listMetafieldValue(metafields.trafficRating),
-        )
-      : null,
-    metafields.applicationArea.length
-      ? metafieldInput(
-          "application_area",
-          "list.single_line_text_field",
-          listMetafieldValue(metafields.applicationArea),
-        )
-      : null,
-    metafields.suitableFor.length
-      ? metafieldInput(
-          "suitable_for",
-          "list.single_line_text_field",
-          listMetafieldValue(metafields.suitableFor),
+          listMetafieldValue(metafields.features),
         )
       : null,
     metafieldInput(

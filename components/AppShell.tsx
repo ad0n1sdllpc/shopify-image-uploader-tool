@@ -2097,10 +2097,10 @@ function MigrationPage({
           <div className="flex flex-wrap gap-2">
             <label className="admin-button cursor-pointer">
               <Upload size={17} />
-              {descriptionWorkbook ? "Change workbook" : "Upload workbook"}
+              {descriptionWorkbook ? "Change file" : "Upload file"}
               <input
                 type="file"
-                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                 className="sr-only"
                 disabled={busy}
                 onChange={(event) =>
@@ -2130,11 +2130,11 @@ function MigrationPage({
         </div>
         {descriptionWorkbook ? (
           <p className="mt-3 text-xs admin-muted">
-            Description workbook: {descriptionWorkbook.name}
+            Description file: {descriptionWorkbook.name}
           </p>
         ) : (
           <p className="mt-3 text-xs admin-muted">
-            Upload an Excel workbook to populate descriptions and filter
+            Upload an Excel workbook or CSV to populate descriptions and filter
             metafields from Item Code matches.
           </p>
         )}
